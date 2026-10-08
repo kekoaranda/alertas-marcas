@@ -55,6 +55,17 @@
 
     <!-- Panel del cliente -->
     <section id="vista-panel" hidden>
+      <div id="admin" class="tarjeta" hidden>
+        <div class="titulo-fila">
+          <h2>Administración</h2>
+          <span class="plan">Solo lo ves vos</span>
+        </div>
+        <dl id="admin-totales" class="totales"></dl>
+        <input id="admin-buscar" type="search" placeholder="Buscar cliente por nombre o email" aria-label="Buscar cliente">
+        <p id="error-admin" class="error" role="alert"></p>
+        <div id="admin-usuarios"></div>
+      </div>
+
       <div class="tarjeta">
         <div class="titulo-fila">
           <h2>Mis marcas vigiladas</h2>

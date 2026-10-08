@@ -96,6 +96,8 @@ $('#salir').addEventListener('click', async () => {
 // ---------------------------------------------------------------------
 // Panel
 // ---------------------------------------------------------------------
+let esAdmin = false;
+
 async function cargarCuenta() {
   const yo = await api('GET', '/api/yo');
   $('#usuario-nombre').textContent = yo.nombre;
@@ -104,6 +106,8 @@ async function cargarCuenta() {
       ? `Plan ${yo.plan}: ${yo.usados} marcas`
       : `Plan ${yo.plan}: ${yo.usados} de ${yo.limite} marcas`;
   $('#recibir-avisos').checked = yo.recibir_avisos;
+  $('#admin').hidden = !yo.es_admin;
+  esAdmin = yo.es_admin;
   const lleno = yo.limite !== null && yo.usados >= yo.limite;
   $('#form-termino').dataset.bloqueado = lleno ? 'si' : 'no';
   $('#form-termino button').disabled = lleno;
@@ -265,19 +269,120 @@ $('#form-password').addEventListener('submit', (e) => {
   });
 });
 
+// ---------------------------------------------------------------------
+// Administración (solo para cuentas admin; el servidor igual lo controla)
+// ---------------------------------------------------------------------
+const numero = (n) => Number(n).toLocaleString('es-PY');
+
+async function cargarAdmin() {
+  if (!esAdmin) return;
+  const buscar = $('#admin-buscar').value.trim();
+  const [r, usuarios] = await Promise.all([
+    api('GET', '/api/admin/resumen'),
+    api('GET', `/api/admin/usuarios?buscar=${encodeURIComponent(buscar)}`),
+  ]);
+
+  const totales = [
+    ['Clientes', numero(r.clientes)],
+    ['FREE / PREMIUM', `${numero(r.free)} / ${numero(r.premium)}`],
+    ['Inhabilitados', numero(r.inhabilitados)],
+    ['Marcas vigiladas', numero(r.marcas_vigiladas)],
+    ['Alertas (7 días)', numero(r.alertas_semana)],
+    ['Alertas en total', numero(r.alertas)],
+    ['Marcas DINAPI', numero(r.marcas_dinapi)],
+    ['Última carga DINAPI', r.ultima_carga ? fecha(r.ultima_carga) : '-'],
+  ];
+  $('#admin-totales').replaceChildren(
+    ...totales.map(([titulo, valor]) => {
+      const caja = el('div');
+      caja.append(el('dt', titulo), el('dd', valor));
+      return caja;
+    })
+  );
+
+  const contenedor = $('#admin-usuarios');
+  if (!usuarios.length) {
+    contenedor.replaceChildren(el('p', 'No hay clientes con esa búsqueda.', 'sutil'));
+    return;
+  }
+  const tabla = el('table', null, 'tabla');
+  tabla.append(el('thead'), el('tbody'));
+  const encabezado = el('tr');
+  for (const titulo of ['Cliente', 'Plan', 'Marcas', 'Alertas', 'Alta', 'Estado', '']) encabezado.append(el('th', titulo));
+  tabla.tHead.append(encabezado);
+
+  for (const u of usuarios) {
+    const fila = el('tr');
+    const acciones = el('td');
+    const caja = el('div', null, 'acciones-admin');
+    const otroPlan = u.plan === 'PREMIUM' ? 'FREE' : 'PREMIUM';
+    caja.append(botonAdmin(`Pasar a ${otroPlan}`, () => api('PATCH', `/api/admin/usuarios/${u.id}`, { plan: otroPlan })));
+    if (!u.es_admin) {
+      caja.append(
+        u.habilitado
+          ? botonAdmin('Inhabilitar', () => api('PATCH', `/api/admin/usuarios/${u.id}`, { habilitado: false }), {
+              confirmar: `¿Inhabilitar a ${u.email}? No va a poder entrar ni recibir avisos. Sus datos se guardan.`,
+            })
+          : botonAdmin('Reactivar', () => api('PATCH', `/api/admin/usuarios/${u.id}`, { habilitado: true })),
+        botonAdmin('Borrar', () => api('DELETE', `/api/admin/usuarios/${u.id}`), {
+          peligro: true,
+          confirmar: `¿Borrar la cuenta de ${u.email}? Se borran también sus marcas y alertas. No se puede deshacer.`,
+        })
+      );
+    }
+    acciones.append(caja);
+    fila.append(
+      celda('Cliente', u.nombre, u.email),
+      celda('Plan', u.plan),
+      celda('Marcas', String(u.marcas)),
+      celda('Alertas', String(u.alertas)),
+      celda('Alta', fecha(u.creado_el)),
+      celda('Estado', u.es_admin ? 'Admin' : u.habilitado ? 'Activa' : 'Inhabilitada'),
+      acciones
+    );
+    if (!u.habilitado) fila.querySelector('[data-titulo=Estado] span').className = 'estado-off';
+    tabla.tBodies[0].append(fila);
+  }
+  contenedor.replaceChildren(tabla);
+}
+
+function botonAdmin(texto, accion, { confirmar, peligro } = {}) {
+  const boton = el('button', texto, peligro ? 'enlace peligro' : 'enlace');
+  boton.addEventListener('click', async () => {
+    if (confirmar && !confirm(confirmar)) return;
+    boton.disabled = true;
+    try {
+      await accion();
+      $('#error-admin').textContent = '';
+      await refrescar();
+    } catch (err) {
+      $('#error-admin').textContent = err.message;
+      boton.disabled = false;
+    }
+  });
+  return boton;
+}
+
+let esperaBusqueda;
+$('#admin-buscar').addEventListener('input', () => {
+  clearTimeout(esperaBusqueda);
+  esperaBusqueda = setTimeout(() => cargarAdmin().catch((err) => ($('#error-admin').textContent = err.message)), 300);
+});
+
 // Opciones de clase de Niza 1 a 45
 for (let clase = 1; clase <= 45; clase++) {
   $('#form-termino select').append(new Option(`Clase ${clase}`, String(clase)));
 }
 
 async function refrescar() {
-  await Promise.all([cargarCuenta(), cargarTerminos(), cargarAlertas()]);
+  await cargarCuenta();
+  await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin()]);
 }
 
 async function iniciar() {
   try {
     await cargarCuenta(); // si no hay sesión, falla acá con 401
-    await Promise.all([cargarTerminos(), cargarAlertas()]);
+    await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin()]);
     $('#vista-acceso').hidden = true;
     $('#vista-panel').hidden = false;
     $('#usuario').hidden = false;

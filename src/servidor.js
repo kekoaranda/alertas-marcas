@@ -102,9 +102,9 @@ async function cargarUsuario(req, _res, next) {
   const token = leerCookie(req, COOKIE);
   if (token) {
     const { rows } = await query(
-      `SELECT u.id, u.email, u.nombre, u.plan_pago, u.recibir_avisos
+      `SELECT u.id, u.email, u.nombre, u.plan_pago, u.recibir_avisos, u.es_admin
        FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
-       WHERE s.token_hash = $1 AND s.expira_el > now()`,
+       WHERE s.token_hash = $1 AND s.expira_el > now() AND u.habilitado`,
       [hashToken(token)]
     );
     req.usuario = rows[0] ?? null;
@@ -114,6 +114,12 @@ async function cargarUsuario(req, _res, next) {
 
 function requiereSesion(req, _res, next) {
   if (!req.usuario) throw error(401, 'Tenés que iniciar sesión');
+  next();
+}
+
+function requiereAdmin(req, _res, next) {
+  if (!req.usuario) throw error(401, 'Tenés que iniciar sesión');
+  if (!req.usuario.es_admin) throw error(403, 'Solo para administradores');
   next();
 }
 
@@ -186,7 +192,7 @@ export function crearApp() {
     verificarIntentos(clave);
 
     const { rows } = await query(
-      'SELECT id, password_hash FROM usuarios WHERE lower(email) = $1',
+      'SELECT id, password_hash, habilitado FROM usuarios WHERE lower(email) = $1',
       [email]
     );
     const usuario = rows[0];
@@ -196,6 +202,7 @@ export function crearApp() {
       throw error(401, 'Email o contraseña incorrectos');
     }
     intentosFallidos.delete(clave);
+    if (!usuario.habilitado) throw error(403, 'Tu cuenta está inhabilitada. Escribinos para reactivarla.');
     await iniciarSesion(req, res, usuario.id);
     res.json({ ok: true });
   });
@@ -219,6 +226,7 @@ export function crearApp() {
       limite: LIMITES_PLAN[req.usuario.plan_pago] ?? null,
       usados: rows[0].usados,
       recibir_avisos: req.usuario.recibir_avisos,
+      es_admin: req.usuario.es_admin,
     });
   });
 
@@ -349,6 +357,68 @@ export function crearApp() {
       [req.params.id, req.usuario.id, req.body.revisada]
     );
     if (!rowCount) throw error(404, 'No encontrada');
+    res.json({ ok: true });
+  });
+
+  // --- Administración (solo cuentas con es_admin) --------------------------
+  app.get('/api/admin/resumen', requiereAdmin, async (_req, res) => {
+    const { rows } = await query(`
+      SELECT
+        (SELECT count(*) FROM usuarios)::int                                   AS clientes,
+        (SELECT count(*) FROM usuarios WHERE plan_pago = 'FREE')::int          AS free,
+        (SELECT count(*) FROM usuarios WHERE plan_pago = 'PREMIUM')::int       AS premium,
+        (SELECT count(*) FROM usuarios WHERE NOT habilitado)::int              AS inhabilitados,
+        (SELECT count(*) FROM terminos_monitoreados)::int                      AS marcas_vigiladas,
+        (SELECT count(*) FROM alertas)::int                                    AS alertas,
+        (SELECT count(*) FROM alertas WHERE creado_el > now() - interval '7 days')::int AS alertas_semana,
+        (SELECT count(*) FROM marcas_dinapi)::int                              AS marcas_dinapi,
+        (SELECT max(cargado_el) FROM marcas_dinapi)                            AS ultima_carga`);
+    res.json(rows[0]);
+  });
+
+  app.get('/api/admin/usuarios', requiereAdmin, async (req, res) => {
+    const buscar = String(req.query.buscar ?? '').trim().slice(0, 100);
+    const { rows } = await query(
+      `SELECT u.id, u.email, u.nombre, u.plan_pago AS plan, u.habilitado, u.es_admin,
+              u.recibir_avisos, u.creado_el,
+              (SELECT count(*) FROM terminos_monitoreados t WHERE t.usuario_id = u.id)::int AS marcas,
+              (SELECT count(*) FROM alertas a JOIN terminos_monitoreados t ON t.id = a.termino_id
+                WHERE t.usuario_id = u.id)::int AS alertas
+       FROM usuarios u
+       WHERE $1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.nombre ILIKE '%' || $1 || '%'
+       ORDER BY u.creado_el DESC
+       LIMIT 500`,
+      [buscar.replace(/[\\%_]/g, '\\$&')]
+    );
+    res.json(rows);
+  });
+
+  // Cambiar plan o inhabilitar/reactivar una cuenta
+  app.patch('/api/admin/usuarios/:id', requiereAdmin, async (req, res) => {
+    if (!ES_UUID.test(req.params.id)) throw error(404, 'No encontrado');
+    const { plan, habilitado } = req.body ?? {};
+    if (plan !== undefined && !(plan in LIMITES_PLAN)) throw error(400, 'Plan inválido (FREE o PREMIUM)');
+    if (habilitado !== undefined && typeof habilitado !== 'boolean') throw error(400, 'habilitado tiene que ser true o false');
+    if (plan === undefined && habilitado === undefined) throw error(400, 'Nada para cambiar');
+    if (req.params.id === req.usuario.id && habilitado === false) throw error(400, 'No podés inhabilitar tu propia cuenta');
+
+    const { rowCount } = await query(
+      `UPDATE usuarios SET plan_pago = COALESCE($2, plan_pago), habilitado = COALESCE($3, habilitado)
+       WHERE id = $1`,
+      [req.params.id, plan ?? null, habilitado ?? null]
+    );
+    if (!rowCount) throw error(404, 'No encontrado');
+    // Al inhabilitar se cierran sus sesiones abiertas
+    if (habilitado === false) await query('DELETE FROM sesiones WHERE usuario_id = $1', [req.params.id]);
+    res.json({ ok: true });
+  });
+
+  // Borra la cuenta con sus marcas, alertas y sesiones (no se puede deshacer)
+  app.delete('/api/admin/usuarios/:id', requiereAdmin, async (req, res) => {
+    if (!ES_UUID.test(req.params.id)) throw error(404, 'No encontrado');
+    if (req.params.id === req.usuario.id) throw error(400, 'No podés borrar tu propia cuenta');
+    const { rowCount } = await query('DELETE FROM usuarios WHERE id = $1', [req.params.id]);
+    if (!rowCount) throw error(404, 'No encontrado');
     res.json({ ok: true });
   });
 

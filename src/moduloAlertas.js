@@ -47,7 +47,9 @@ terminos AS (
   SELECT t.id, normalizar_marca(t.texto_buscar) AS texto,
          ${PALABRAS('normalizar_marca(t.texto_buscar)')} AS palabras,
          fonetica_es(t.texto_buscar) AS fonetica
-  FROM terminos_monitoreados t, marca m
+  FROM terminos_monitoreados t
+  JOIN usuarios u ON u.id = t.usuario_id AND u.habilitado,
+       marca m
   WHERE t.clase_niza IS NULL
      OR m.clase IS NULL
      OR t.clase_niza = m.clase

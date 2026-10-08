@@ -38,6 +38,7 @@ const SQL_PENDIENTES = `
   WHERE a.notificada_el IS NULL
     AND a.revisada = false
     AND u.recibir_avisos
+    AND u.habilitado
   ORDER BY u.id, a.similitud DESC, m.fecha_ingreso DESC`;
 
 const TIPOS = {

@@ -19,6 +19,7 @@ alertas-marcas/
 │   ├── procesadorBoletin.js  lee el CSV o Excel, guarda marcas y llama al motor
 │   ├── notificador.js      avisos por email de las alertas nuevas
 │   ├── servidor.js         página web + API (registro, ingreso, marcas, alertas)
+│   ├── hacerAdmin.js       da o quita permiso de administrador (npm run admin)
 │   ├── config.js           lee la configuración del .env
 │   ├── registro.js         registro de errores en logs/
 │   └── aplicarSql.js       ejecuta un .sql desde la terminal
@@ -296,17 +297,33 @@ servidor; para publicarla se pone delante un túnel de Cloudflare o nginx),
 - **FREE**: hasta 3 marcas (cambiable con `PLAN_FREE_MAXIMO`).
 - **PREMIUM**: sin límite.
 
-Por ahora el plan se cambia a mano en la base:
-
-```sql
-UPDATE usuarios SET plan_pago = 'PREMIUM' WHERE lower(email) = 'cliente@ejemplo.com';
-```
+El plan se cambia desde la sección **Administración** de la página (ver abajo).
 
 ### Qué hay en la página
 - Ingresar / Crear cuenta.
 - **Mis marcas vigiladas**: agregar, quitar y "Ver parecidas ya registradas" (busca en todas las marcas cargadas de la DINAPI).
 - **Alertas**: las coincidencias de los boletines nuevos; se marcan como revisadas.
 - **Mi cuenta**: activar o desactivar avisos por email y cambiar la contraseña.
+
+### Administración
+Las cuentas con permiso de administrador ven arriba de todo la sección
+**Administración** (los clientes no la ven, y la API se lo niega igual):
+
+- Totales: clientes, FREE / PREMIUM, inhabilitados, marcas vigiladas, alertas y marcas de la DINAPI cargadas.
+- Lista de clientes con buscador (nombre, email, plan, marcas, alertas, fecha de alta).
+- Botones por cliente: **Pasar a PREMIUM / FREE**, **Inhabilitar / Reactivar** y **Borrar** (pide confirmación).
+
+**Inhabilitar** no borra nada: el cliente no puede entrar (se cierran sus
+sesiones), no se le generan alertas nuevas ni recibe avisos. Al reactivarlo
+vuelve como estaba. **Borrar** elimina la cuenta con sus marcas y alertas, y
+no se puede deshacer. Un administrador no puede inhabilitarse ni borrarse a sí mismo.
+
+Dar permiso de administrador (la cuenta tiene que estar registrada en la página):
+
+```bash
+npm run admin -- kekoaranda@gmail.com
+npm run admin -- otra@persona.com --quitar     # para quitarlo
+```
 
 ### App instalable (PWA) en PC y celular
 Es una sola página que se adapta a la pantalla y se puede instalar como app:
@@ -329,6 +346,10 @@ Al cambiar archivos de `public/`, subir el número de `VERSION` en `public/sw.js
 | `GET /api/terminos/:id/similares` | marcas parecidas ya presentadas |
 | `GET /api/alertas?estado=pendientes\|todas` | alertas del cliente |
 | `PATCH /api/alertas/:id` | marcar revisada o pendiente |
+| `GET /api/admin/resumen` | totales (solo administradores) |
+| `GET /api/admin/usuarios?buscar=` | lista de clientes (solo administradores) |
+| `PATCH /api/admin/usuarios/:id` | cambiar `plan` o `habilitado` (solo administradores) |
+| `DELETE /api/admin/usuarios/:id` | borrar una cuenta (solo administradores) |
 | `GET /api/salud` | responde `{"ok":true}` |
 
 ### Seguridad
@@ -339,7 +360,7 @@ Al cambiar archivos de `public/`, subir el número de `VERSION` en `public/sw.js
 
 ### Pendiente
 - Recuperar contraseña por email y verificar el email al registrarse.
-- Pago y cambio de plan desde la página.
+- Pago del plan PREMIUM desde la página.
 
 ## Prueba realizada
 
