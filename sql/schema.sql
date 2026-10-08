@@ -183,3 +183,11 @@ CREATE TABLE IF NOT EXISTS sesiones (
 );
 CREATE INDEX IF NOT EXISTS sesiones_usuario_idx ON sesiones (usuario_id);
 CREATE INDEX IF NOT EXISTS sesiones_expira_idx  ON sesiones (expira_el);
+
+-- 5) Administración (sección Admin de la página) -------------------------
+-- es_admin: puede ver y manejar todas las cuentas desde la página.
+-- habilitado = false: la cuenta no puede entrar, no genera alertas nuevas ni
+-- recibe avisos. No se borra nada: al reactivarla vuelve como estaba.
+ALTER TABLE usuarios
+    ADD COLUMN IF NOT EXISTS es_admin   BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS habilitado BOOLEAN NOT NULL DEFAULT true;

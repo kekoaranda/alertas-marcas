@@ -89,6 +89,12 @@ button:disabled { opacity: 0.6; cursor: default; }
 .tabla td { padding: 8px; border-bottom: 1px solid var(--borde); vertical-align: top; }
 .tabla .chica { color: var(--sutil); font-size: 0.82rem; }
 .alerta-revisada { opacity: 0.55; }
+.totales { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 0 0 12px; }
+.totales div { background: var(--fondo); border-radius: 8px; padding: 8px 10px; }
+.totales dt { color: var(--sutil); font-size: 0.82rem; }
+.totales dd { margin: 0; font-size: 1.15rem; font-weight: 600; }
+.acciones-admin { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.estado-off { color: var(--peligro); }
 details { margin-top: 12px; }
 summary { cursor: pointer; color: var(--primario); }
 

@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node --env-file=.env src/servidor.js",
     "db:schema": "node --env-file=.env src/aplicarSql.js sql/schema.sql",
+    "admin": "node --env-file=.env src/hacerAdmin.js",
     "db:demo": "node --env-file=.env src/aplicarSql.js sql/datos-demo.sql",
     "db:limpiar-documentos": "node --env-file=.env src/aplicarSql.js sql/limpiar-documentos-recibidos.sql",
     "procesar:archivo": "node --env-file=.env src/procesadorBoletin.js --archivo",

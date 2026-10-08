@@ -2,7 +2,7 @@
 // aunque no haya conexión. Los datos (/api) nunca se guardan en caché:
 // siempre se piden al servidor para que las alertas estén al día.
 
-const VERSION = 'alertas-v1'; // cambiar al publicar cambios en public/
+const VERSION = 'alertas-v2'; // cambiar al publicar cambios en public/
 const ARCHIVOS = [
   '/',
   '/index.html',
