@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Alertas de Marcas</title>
+  <meta name="theme-color" content="#1d4ed8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Alertas Marcas">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="iconos/favicon.png">
+  <link rel="apple-touch-icon" href="iconos/apple-touch-icon.png">
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <header class="barra">
+    <span class="logo">Alertas de Marcas</span>
+    <button id="instalar" class="enlace" hidden>Instalar app</button>
+    <span id="usuario" class="usuario" hidden>
+      <span id="usuario-nombre"></span>
+      <button id="salir" class="enlace">Salir</button>
+    </span>
+  </header>
+
+  <p id="sin-conexion" class="aviso-conexion" role="status" hidden>Sin conexión. Mostrando lo último que se cargó.</p>
+
+  <main>
+    <!-- Ingreso y registro -->
+    <section id="vista-acceso" hidden>
+      <div class="tarjeta acceso">
+        <h1>Vigilá tus marcas en la DINAPI</h1>
+        <p class="sutil">Te avisamos por email cuando alguien solicita una marca igual o parecida a la tuya.</p>
+
+        <div class="pestanas" role="tablist">
+          <button id="tab-ingreso" class="pestana activa" role="tab">Ingresar</button>
+          <button id="tab-registro" class="pestana" role="tab">Crear cuenta</button>
+        </div>
+
+        <form id="form-ingreso">
+          <label>Email <input name="email" type="email" autocomplete="email" required></label>
+          <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit" class="principal">Ingresar</button>
+        </form>
+
+        <form id="form-registro" hidden>
+          <label>Nombre o estudio <input name="nombre" autocomplete="name" required maxlength="100"></label>
+          <label>Email <input name="email" type="email" autocomplete="email" required></label>
+          <label>Contraseña <span class="sutil">(mínimo 8 caracteres)</span>
+            <input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="72"></label>
+          <button type="submit" class="principal">Crear cuenta gratis</button>
+        </form>
+        <p id="error-acceso" class="error" role="alert"></p>
+      </div>
+    </section>
+
+    <!-- Panel del cliente -->
+    <section id="vista-panel" hidden>
+      <div class="tarjeta">
+        <div class="titulo-fila">
+          <h2>Mis marcas vigiladas</h2>
+          <span id="plan" class="plan"></span>
+        </div>
+        <form id="form-termino" class="fila-form">
+          <input name="texto" placeholder="Nombre de la marca" required minlength="2" maxlength="100">
+          <select name="clase" aria-label="Clase de Niza">
+            <option value="">Todas las clases</option>
+          </select>
+          <button type="submit" class="principal">Agregar</button>
+        </form>
+        <p id="error-termino" class="error" role="alert"></p>
+        <ul id="lista-terminos" class="lista"></ul>
+        <p id="sin-terminos" class="sutil" hidden>Todavía no vigilás ninguna marca. Agregá la primera arriba.</p>
+      </div>
+
+      <div class="tarjeta">
+        <div class="titulo-fila">
+          <h2>Alertas</h2>
+          <label class="sutil"><input type="checkbox" id="ver-todas"> Ver también las revisadas</label>
+        </div>
+        <div id="alertas"></div>
+        <p id="sin-alertas" class="sutil" hidden>No hay alertas pendientes. Revisamos cada boletín nuevo de la DINAPI.</p>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Mi cuenta</h2>
+        <label class="check"><input type="checkbox" id="recibir-avisos"> Recibir avisos por email</label>
+        <details>
+          <summary>Cambiar contraseña</summary>
+          <form id="form-password" class="apilado">
+            <label>Contraseña actual <input name="actual" type="password" autocomplete="current-password" required></label>
+            <label>Contraseña nueva <input name="nueva" type="password" autocomplete="new-password" required minlength="8" maxlength="72"></label>
+            <button type="submit">Cambiar</button>
+            <p id="msg-password" class="sutil" role="status"></p>
+          </form>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <template id="tpl-termino">
+    <li class="termino">
+      <div class="termino-datos">
+        <strong class="t-texto"></strong>
+        <span class="t-clase sutil"></span>
+        <span class="t-alertas insignia" hidden></span>
+      </div>
+      <div class="acciones">
+        <button class="enlace t-similares">Ver parecidas ya registradas</button>
+        <button class="enlace peligro t-borrar">Quitar</button>
+      </div>
+      <div class="t-resultado" hidden></div>
+    </li>
+  </template>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

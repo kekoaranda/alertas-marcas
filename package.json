@@ -1,0 +1,30 @@
+{
+  "name": "alertas-marcas",
+  "version": "1.0.0",
+  "description": "Backend de alertas de marcas DINAPI (Paraguay): Node.js + PostgreSQL con SQL puro",
+  "type": "module",
+  "main": "src/procesadorBoletin.js",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "start": "node --env-file=.env src/servidor.js",
+    "db:schema": "node --env-file=.env src/aplicarSql.js sql/schema.sql",
+    "db:demo": "node --env-file=.env src/aplicarSql.js sql/datos-demo.sql",
+    "db:limpiar-documentos": "node --env-file=.env src/aplicarSql.js sql/limpiar-documentos-recibidos.sql",
+    "procesar:archivo": "node --env-file=.env src/procesadorBoletin.js --archivo",
+    "procesar:url": "node --env-file=.env src/procesadorBoletin.js --url",
+    "procesar:pagina": "node --env-file=.env src/procesadorBoletin.js --pagina",
+    "procesar:historico": "node --env-file=.env src/procesadorBoletin.js --pagina --historico",
+    "avisos": "node --env-file=.env src/notificador.js",
+    "avisos:probar": "node --env-file=.env src/notificador.js --probar"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "csv-parse": "^5.5.6",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "nodemailer": "^7.0.0",
+    "pg": "^8.13.1"
+  }
+}
