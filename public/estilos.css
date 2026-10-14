@@ -111,3 +111,17 @@ summary { cursor: pointer; color: var(--primario); }
   .tabla td { border: none; padding: 2px 0; }
   .tabla td[data-titulo]::before { content: attr(data-titulo) ": "; color: var(--sutil); }
 }
+
+/* Imprimir los vencimientos: solo sale esa tarjeta, en blanco y negro */
+@media print {
+  body.imprimir-vencimientos { background: #fff; color: #000; }
+  body.imprimir-vencimientos .barra,
+  body.imprimir-vencimientos .aviso-conexion,
+  body.imprimir-vencimientos #vista-panel > :not(#vencimientos),
+  body.imprimir-vencimientos .no-imprimir { display: none !important; }
+  body.imprimir-vencimientos #vencimientos { border: 0; box-shadow: none; padding: 0; background: #fff; }
+  body.imprimir-vencimientos .tabla th,
+  body.imprimir-vencimientos .tabla td,
+  body.imprimir-vencimientos .sutil,
+  body.imprimir-vencimientos .chica { color: #000; }
+}

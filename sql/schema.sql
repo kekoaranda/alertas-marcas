@@ -222,3 +222,12 @@ ALTER TABLE terminos_monitoreados
     ADD COLUMN IF NOT EXISTS marca_dinapi_id UUID REFERENCES marcas_dinapi(id) ON DELETE CASCADE;
 CREATE UNIQUE INDEX IF NOT EXISTS terminos_marca_agente_unica
     ON terminos_monitoreados (usuario_id, marca_dinapi_id);
+
+-- 7) Vencimientos ---------------------------------------------------------
+-- El boletín de Marcas Recibidas solo trae la fecha de solicitud. Si la
+-- migración o el dataset de marcas registradas traen la concesión o el
+-- vencimiento, se guardan acá y tienen prioridad. Si no, el vencimiento se
+-- estima como solicitud + 10 años (ver src/agentes.js).
+ALTER TABLE marcas_dinapi
+    ADD COLUMN IF NOT EXISTS fecha_concesion   DATE,
+    ADD COLUMN IF NOT EXISTS fecha_vencimiento DATE;

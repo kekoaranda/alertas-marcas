@@ -95,6 +95,20 @@
         <p id="sin-alertas" class="sutil" hidden>No hay alertas pendientes. Revisamos cada boletín nuevo de la DINAPI.</p>
       </div>
 
+      <div id="vencimientos" class="tarjeta" hidden>
+        <div class="titulo-fila">
+          <h2 id="venc-titulo">Marcas que vencen</h2>
+          <div class="fila-form no-imprimir">
+            <select id="venc-anio" aria-label="Año de vencimiento"></select>
+            <button id="venc-imprimir" type="button">Imprimir</button>
+          </div>
+        </div>
+        <p id="venc-agente" class="sutil"></p>
+        <p id="error-venc" class="error" role="alert"></p>
+        <div id="venc-lista"></div>
+        <p id="venc-nota" class="sutil chica" hidden>* Vencimiento estimado: fecha de solicitud + 10 años. La DINAPI cuenta los 10 años desde la concesión, así que puede vencer algo más tarde.</p>
+      </div>
+
       <div class="tarjeta">
         <h2>Mi cuenta</h2>
         <label class="check"><input type="checkbox" id="recibir-avisos"> Recibir avisos por email</label>

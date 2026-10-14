@@ -97,6 +97,7 @@ $('#salir').addEventListener('click', async () => {
 // Panel
 // ---------------------------------------------------------------------
 let esAdmin = false;
+let esAgente = false;
 
 async function cargarCuenta() {
   const yo = await api('GET', '/api/yo');
@@ -135,6 +136,9 @@ function mostrarAgente(yo) {
       : `Matrícula de agente ${yo.matricula}${nombre}: pendiente de verificación. Cuando la confirmemos vas a ver tus marcas acá.`;
   }
   $('#caja-matricula').hidden = yo.matricula_verificada;
+  esAgente = yo.matricula_verificada;
+  $('#vencimientos').hidden = !esAgente;
+  $('#venc-agente').textContent = esAgente ? `${yo.agente ?? yo.nombre} · Matrícula ${yo.matricula}` : '';
   $('#caja-matricula summary').textContent = yo.matricula ? 'Corregir mi matrícula' : 'Soy agente de marcas';
 }
 
@@ -313,6 +317,57 @@ $('#form-password').addEventListener('submit', (e) => {
 });
 
 // ---------------------------------------------------------------------
+// Vencimientos (agentes): sus marcas que vencen en el año, para consultar e imprimir
+// ---------------------------------------------------------------------
+const ANIO_ACTUAL = new Date().getFullYear();
+for (let anio = ANIO_ACTUAL - 1; anio <= ANIO_ACTUAL + 10; anio++) {
+  $('#venc-anio').append(new Option(String(anio), String(anio), false, anio === ANIO_ACTUAL));
+}
+
+async function cargarVencimientos() {
+  if (!esAgente) return;
+  const anio = $('#venc-anio').value;
+  $('#venc-titulo').textContent = `Marcas que vencen en ${anio}`;
+  const contenedor = $('#venc-lista');
+  try {
+    const { marcas } = await api('GET', `/api/vencimientos?anio=${anio}`);
+    $('#error-venc').textContent = '';
+    $('#venc-nota').hidden = !marcas.some((m) => m.estimado);
+    if (!marcas.length) {
+      contenedor.replaceChildren(el('p', `Ninguna de tus marcas vence en ${anio}.`, 'sutil'));
+      return;
+    }
+    const tabla = el('table', null, 'tabla');
+    tabla.append(el('thead'), el('tbody'));
+    const encabezado = el('tr');
+    for (const titulo of ['Vence', 'Marca', 'Clase', 'Expediente', 'Titular']) encabezado.append(el('th', titulo));
+    tabla.tHead.append(encabezado);
+    for (const m of marcas) {
+      const fila = el('tr');
+      fila.append(
+        celda('Vence', fecha(m.vence) + (m.estimado ? ' *' : '')),
+        celda('Marca', m.nombre_marca ?? '(solo logo)', m.tipo_tramite),
+        celda('Clase', m.clase_niza ?? '-'),
+        celda('Expediente', m.nro_expediente, m.fecha_ingreso && `Solicitud ${fecha(m.fecha_ingreso)}`),
+        celda('Titular', m.titular ?? '-')
+      );
+      tabla.tBodies[0].append(fila);
+    }
+    contenedor.replaceChildren(el('p', `${marcas.length} marca${marcas.length === 1 ? '' : 's'}`, 'sutil'), tabla);
+  } catch (err) {
+    $('#error-venc').textContent = err.message;
+  }
+}
+
+$('#venc-anio').addEventListener('change', cargarVencimientos);
+$('#venc-imprimir').addEventListener('click', () => {
+  // Al imprimir solo sale esta tarjeta (ver @media print en estilos.css)
+  document.body.classList.add('imprimir-vencimientos');
+  window.print();
+});
+window.addEventListener('afterprint', () => document.body.classList.remove('imprimir-vencimientos'));
+
+// ---------------------------------------------------------------------
 // Administración (solo para cuentas admin; el servidor igual lo controla)
 // ---------------------------------------------------------------------
 const numero = (n) => Number(n).toLocaleString('es-PY');
@@ -435,13 +490,13 @@ for (let clase = 1; clase <= 45; clase++) {
 
 async function refrescar() {
   await cargarCuenta();
-  await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin()]);
+  await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin(), cargarVencimientos()]);
 }
 
 async function iniciar() {
   try {
     await cargarCuenta(); // si no hay sesión, falla acá con 401
-    await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin()]);
+    await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin(), cargarVencimientos()]);
     $('#vista-acceso').hidden = true;
     $('#vista-panel').hidden = false;
     $('#usuario').hidden = false;

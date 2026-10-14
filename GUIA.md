@@ -347,6 +347,16 @@ comparan solo los dígitos). Un agente no tiene que cargar sus marcas a mano:
    - No recibe alertas por las marcas que presenta él mismo.
    - Estas marcas **no cuentan para el límite del plan**. Si quita una, no vuelve.
 
+**Vencimientos**: el agente ve la tarjeta **Marcas que vencen en ...** con
+sus marcas que vencen en el año elegido (por defecto el actual) y un botón
+**Imprimir** que imprime solo esa lista. Por cada marca (mismo nombre y clase)
+cuenta el trámite más reciente, así una marca ya renovada no aparece. El
+vencimiento sale de `marcas_dinapi.fecha_vencimiento`, o `fecha_concesion` + 10
+años, y si no hay ninguna de las dos se **estima** como fecha de solicitud + 10
+años (sale con `*`). El boletín de Marcas Recibidas solo trae la solicitud, y
+hay CSV desde 2021, así que para ver vencimientos reales hay que cargar esas
+dos columnas desde la migración o el dataset de marcas registradas.
+
 **Quitar matrícula** (Administración) le quita el acceso con matrícula y deja
 de vigilar las marcas que se cargaron solas. Una matrícula verificada
 pertenece a una sola cuenta.
@@ -371,6 +381,7 @@ Al cambiar archivos de `public/`, subir el número de `VERSION` en `public/sw.js
 | `DELETE /api/terminos/:id` | quitar una marca (y sus alertas) |
 | `GET /api/terminos/:id/similares` | marcas parecidas ya presentadas |
 | `GET /api/alertas?estado=pendientes\|todas` | alertas del cliente |
+| `GET /api/vencimientos?anio=` | marcas del agente que vencen en el año (solo matrícula verificada) |
 | `PATCH /api/alertas/:id` | marcar revisada o pendiente |
 | `GET /api/admin/resumen` | totales (solo administradores) |
 | `GET /api/admin/usuarios?buscar=` | lista de clientes (solo administradores) |

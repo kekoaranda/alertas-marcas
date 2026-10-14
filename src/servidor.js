@@ -16,7 +16,7 @@ import bcrypt from 'bcryptjs';
 import { pool, query } from './db.js';
 import { env, envNumero } from './config.js';
 import { buscarMarcasSimilares } from './moduloAlertas.js';
-import { datosDeMatricula, normalizarMatricula, vigilarMarcasDelAgente } from './agentes.js';
+import { datosDeMatricula, normalizarMatricula, vencimientosDelAgente, vigilarMarcasDelAgente } from './agentes.js';
 import { registrarError } from './registro.js';
 
 const CARPETA_PUBLICA = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -370,6 +370,14 @@ export function crearApp() {
     );
     if (!rows.length) throw error(404, 'No encontrada');
     res.json(await buscarMarcasSimilares(rows[0].texto_buscar, { clase: rows[0].clase_niza, limite: 30 }));
+  });
+
+  // --- Vencimientos (agentes con matrícula verificada) ---------------------
+  app.get('/api/vencimientos', requiereSesion, async (req, res) => {
+    if (!req.usuario.matricula_verificada) throw error(403, 'Solo para agentes con matrícula verificada');
+    const anio = req.query.anio === undefined ? new Date().getFullYear() : Number(req.query.anio);
+    if (!Number.isInteger(anio) || anio < 1900 || anio > 2200) throw error(400, 'Año inválido');
+    res.json({ anio, marcas: await vencimientosDelAgente(req.usuario.matricula, anio) });
   });
 
   // --- Alertas -------------------------------------------------------------

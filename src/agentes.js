@@ -75,3 +75,37 @@ export async function datosDeMatricula(matricula, { client = pool } = {}) {
   );
   return rows[0];
 }
+
+// Una marca de registro dura 10 años (Ley 1294/98). Por cada marca del agente
+// (mismo nombre y clase) cuenta el trámite más reciente: si la renovó, vence
+// la renovación. Vencimiento: el cargado, o concesión + 10 años, o, si solo
+// hay fecha de solicitud, solicitud + 10 años (estimado: la concesión suele
+// llegar después, así que en ese caso vence algo más tarde).
+const SQL_VENCIMIENTOS = `
+  WITH ultimas AS (
+    SELECT DISTINCT ON (coalesce(normalizar_marca(m.nombre_marca), m.nro_expediente), m.clase_niza)
+           m.*
+    FROM marcas_dinapi m
+    WHERE normalizar_matricula(m.matricula_agente) = $1
+    ORDER BY coalesce(normalizar_marca(m.nombre_marca), m.nro_expediente), m.clase_niza,
+             m.fecha_ingreso DESC NULLS LAST
+  ),
+  con_vencimiento AS (
+    SELECT u.*,
+           coalesce(u.fecha_vencimiento,
+                    (u.fecha_concesion + interval '10 years')::date,
+                    (u.fecha_ingreso + interval '10 years')::date) AS vence,
+           u.fecha_vencimiento IS NULL AND u.fecha_concesion IS NULL AS estimado
+    FROM ultimas u
+  )
+  SELECT nro_expediente, nombre_marca, clase_niza, tipo_signo, titular, tipo_tramite,
+         fecha_ingreso, vence, estimado
+  FROM con_vencimiento
+  WHERE extract(year FROM vence) = $2
+  ORDER BY vence, nombre_marca NULLS LAST`;
+
+/** Marcas del agente que vencen en el año pedido. */
+export async function vencimientosDelAgente(matricula, anio, { client = pool } = {}) {
+  const { rows } = await client.query(SQL_VENCIMIENTOS, [matricula, anio]);
+  return rows;
+}
