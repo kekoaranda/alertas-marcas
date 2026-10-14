@@ -105,6 +105,7 @@ async function cargarCuenta() {
     yo.limite === null
       ? `Plan ${yo.plan}: ${yo.usados} marcas`
       : `Plan ${yo.plan}: ${yo.usados} de ${yo.limite} marcas`;
+  mostrarAgente(yo);
   $('#recibir-avisos').checked = yo.recibir_avisos;
   $('#admin').hidden = !yo.es_admin;
   esAdmin = yo.es_admin;
@@ -116,6 +117,27 @@ async function cargarCuenta() {
     : '';
 }
 
+// Agente de marcas: sus marcas de la DINAPI se vigilan solas (no cuentan para el plan)
+function mostrarAgente(yo) {
+  const info = $('#info-agente');
+  info.hidden = !yo.matricula_verificada;
+  if (yo.matricula_verificada) {
+    info.textContent =
+      `Como agente (matrícula ${yo.matricula}) vigilamos solas tus ${yo.marcas_de_agente} marcas de la DINAPI, ` +
+      'y las nuevas que presentes se agregan con cada boletín. No cuentan para el límite del plan.';
+  }
+  const estado = $('#matricula-estado');
+  estado.hidden = !yo.matricula;
+  if (yo.matricula) {
+    const nombre = yo.agente ? ` (${yo.agente})` : '';
+    estado.textContent = yo.matricula_verificada
+      ? `Matrícula de agente ${yo.matricula}${nombre}: verificada. Podés entrar con tu matrícula o tu email.`
+      : `Matrícula de agente ${yo.matricula}${nombre}: pendiente de verificación. Cuando la confirmemos vas a ver tus marcas acá.`;
+  }
+  $('#caja-matricula').hidden = yo.matricula_verificada;
+  $('#caja-matricula summary').textContent = yo.matricula ? 'Corregir mi matrícula' : 'Soy agente de marcas';
+}
+
 async function cargarTerminos() {
   const terminos = await api('GET', '/api/terminos');
   const lista = $('#lista-terminos');
@@ -125,6 +147,11 @@ async function cargarTerminos() {
     const item = $('#tpl-termino').content.firstElementChild.cloneNode(true);
     item.querySelector('.t-texto').textContent = t.texto;
     item.querySelector('.t-clase').textContent = t.clase ? `Clase ${t.clase}` : 'Todas las clases';
+    if (t.expediente_agente) {
+      const agente = item.querySelector('.t-agente');
+      agente.hidden = false;
+      agente.textContent = `Tuya, exp. ${t.expediente_agente}`;
+    }
     const insignia = item.querySelector('.t-alertas');
     if (t.alertas_pendientes > 0) {
       insignia.hidden = false;
@@ -255,6 +282,22 @@ $('#recibir-avisos').addEventListener('change', async (e) => {
   await api('PATCH', '/api/yo', { recibir_avisos: e.target.checked });
 });
 
+$('#form-matricula').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  conBoton(form, async () => {
+    try {
+      await api('PATCH', '/api/yo', { matricula: datosForm(form).matricula });
+      form.reset();
+      $('#msg-matricula').textContent = '';
+      $('#caja-matricula').open = false;
+      await cargarCuenta();
+    } catch (err) {
+      $('#msg-matricula').textContent = err.message;
+    }
+  });
+});
+
 $('#form-password').addEventListener('submit', (e) => {
   e.preventDefault();
   const form = e.currentTarget;
@@ -308,7 +351,7 @@ async function cargarAdmin() {
   const tabla = el('table', null, 'tabla');
   tabla.append(el('thead'), el('tbody'));
   const encabezado = el('tr');
-  for (const titulo of ['Cliente', 'Plan', 'Marcas', 'Alertas', 'Alta', 'Estado', '']) encabezado.append(el('th', titulo));
+  for (const titulo of ['Cliente', 'Plan', 'Matrícula', 'Marcas', 'Alertas', 'Alta', 'Estado', '']) encabezado.append(el('th', titulo));
   tabla.tHead.append(encabezado);
 
   for (const u of usuarios) {
@@ -317,6 +360,17 @@ async function cargarAdmin() {
     const caja = el('div', null, 'acciones-admin');
     const otroPlan = u.plan === 'PREMIUM' ? 'FREE' : 'PREMIUM';
     caja.append(botonAdmin(`Pasar a ${otroPlan}`, () => api('PATCH', `/api/admin/usuarios/${u.id}`, { plan: otroPlan })));
+    if (u.matricula) {
+      caja.append(
+        u.matricula_verificada
+          ? botonAdmin('Quitar matrícula', () => api('PATCH', `/api/admin/usuarios/${u.id}`, { matricula_verificada: false }), {
+              confirmar: `¿Quitar la verificación de la matrícula ${u.matricula}? Se dejan de vigilar las marcas que se cargaron solas.`,
+            })
+          : botonAdmin('Verificar matrícula', () => api('PATCH', `/api/admin/usuarios/${u.id}`, { matricula_verificada: true }), {
+              confirmar: `¿Confirmás que ${u.email} es el agente ${u.agente_dinapi ?? ''} (matrícula ${u.matricula})? Va a poder entrar con la matrícula y ver todas sus marcas.`,
+            })
+      );
+    }
     if (!u.es_admin) {
       caja.append(
         u.habilitado
@@ -334,6 +388,11 @@ async function cargarAdmin() {
     fila.append(
       celda('Cliente', u.nombre, u.email),
       celda('Plan', u.plan),
+      celda(
+        'Matrícula',
+        u.matricula ?? '-',
+        u.matricula && [u.agente_dinapi, u.matricula_verificada ? 'verificada' : 'sin verificar'].filter(Boolean).join(' · ')
+      ),
       celda('Marcas', String(u.marcas)),
       celda('Alertas', String(u.alertas)),
       celda('Alta', fecha(u.creado_el)),

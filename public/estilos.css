@@ -83,6 +83,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .termino-datos { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 .acciones { display: flex; gap: 16px; margin-top: 4px; font-size: 0.92rem; }
 .insignia { background: var(--insignia); color: var(--insignia-texto); border-radius: 999px; padding: 1px 8px; font-size: 0.8rem; }
+.insignia-agente { border: 1px solid var(--borde); color: var(--sutil); border-radius: 999px; padding: 0 8px; font-size: 0.8rem; }
 .t-resultado { margin-top: 8px; font-size: 0.92rem; }
 .tabla { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
 .tabla th { text-align: left; color: var(--sutil); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--borde); }
