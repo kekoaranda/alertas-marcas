@@ -2,6 +2,8 @@
 //
 // Cada cliente se registra con email y contraseña, carga las marcas que
 // quiere vigilar (con límite según su plan) y ve sus alertas.
+// Los agentes de marcas además pueden entrar con su matrícula: una vez que un
+// admin la verifica, sus marcas de la DINAPI se vigilan solas (src/agentes.js).
 //
 // Uso:  node --env-file=.env src/servidor.js      (o npm start)
 //       Abre http://localhost:3100 (puerto configurable con PORT)
@@ -14,6 +16,7 @@ import bcrypt from 'bcryptjs';
 import { pool, query } from './db.js';
 import { env, envNumero } from './config.js';
 import { buscarMarcasSimilares } from './moduloAlertas.js';
+import { datosDeMatricula, normalizarMatricula, vencimientosDelAgente, vigilarMarcasDelAgente } from './agentes.js';
 import { registrarError } from './registro.js';
 
 const CARPETA_PUBLICA = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -65,6 +68,15 @@ function claseNiza(valor) {
   return numero;
 }
 
+// Matrícula de agente que escribe el usuario: tiene que tener marcas en la DINAPI.
+async function matriculaDeclarada(valor) {
+  const matricula = normalizarMatricula(valor);
+  if (!matricula || matricula.length > 10) throw error(400, 'La matrícula tiene que ser un número');
+  const { marcas } = await datosDeMatricula(matricula);
+  if (!marcas) throw error(400, `No encontramos marcas presentadas con la matrícula ${matricula} en los boletines de la DINAPI`);
+  return matricula;
+}
+
 // Freno simple contra adivinar contraseñas: 10 intentos fallidos cada 15 minutos
 // por IP y email. En memoria: se reinicia si se reinicia el servidor.
 const intentosFallidos = new Map();
@@ -102,7 +114,8 @@ async function cargarUsuario(req, _res, next) {
   const token = leerCookie(req, COOKIE);
   if (token) {
     const { rows } = await query(
-      `SELECT u.id, u.email, u.nombre, u.plan_pago, u.recibir_avisos, u.es_admin
+      `SELECT u.id, u.email, u.nombre, u.plan_pago, u.recibir_avisos, u.es_admin,
+              u.matricula, u.matricula_verificada
        FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
        WHERE s.token_hash = $1 AND s.expira_el > now() AND u.habilitado`,
       [hashToken(token)]
@@ -171,35 +184,42 @@ export function crearApp() {
     if (!ES_EMAIL.test(email)) throw error(400, 'El email no es válido');
     if (password.length < 8) throw error(400, 'La contraseña tiene que tener al menos 8 caracteres');
     if (password.length > 72) throw error(400, 'La contraseña es demasiado larga');
+    // Opcional: agentes de marcas. Queda pendiente hasta que un admin la verifique.
+    const matricula = String(req.body?.matricula ?? '').trim() ? await matriculaDeclarada(req.body.matricula) : null;
 
     const hash = await bcrypt.hash(password, 10);
     const { rows } = await query(
-      `INSERT INTO usuarios (email, nombre, plan_pago, password_hash)
-       VALUES ($1, $2, 'FREE', $3)
+      `INSERT INTO usuarios (email, nombre, plan_pago, password_hash, matricula)
+       VALUES ($1, $2, 'FREE', $3, $4)
        ON CONFLICT ((lower(email))) DO NOTHING
        RETURNING id`,
-      [email, nombre, hash]
+      [email, nombre, hash, matricula]
     );
     if (!rows.length) throw error(409, 'Ya existe una cuenta con ese email. Probá iniciar sesión.');
     await iniciarSesion(req, res, rows[0].id);
     res.status(201).json({ ok: true });
   });
 
+  // Se entra con el email o, si es agente con matrícula verificada, con la matrícula
   app.post('/api/ingreso', async (req, res) => {
-    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const acceso = String(req.body?.usuario ?? req.body?.email ?? '').trim().toLowerCase();
     const password = String(req.body?.password ?? '');
-    const clave = `${req.ip}|${email}`;
+    const conEmail = acceso.includes('@');
+    const valor = conEmail ? acceso : normalizarMatricula(acceso) ?? '';
+    const clave = `${req.ip}|${valor}`;
     verificarIntentos(clave);
 
     const { rows } = await query(
-      'SELECT id, password_hash, habilitado FROM usuarios WHERE lower(email) = $1',
-      [email]
+      conEmail
+        ? 'SELECT id, password_hash, habilitado FROM usuarios WHERE lower(email) = $1'
+        : 'SELECT id, password_hash, habilitado FROM usuarios WHERE matricula = $1 AND matricula_verificada',
+      [valor]
     );
     const usuario = rows[0];
     const valida = usuario?.password_hash && (await bcrypt.compare(password, usuario.password_hash));
     if (!valida) {
       anotarFallo(clave);
-      throw error(401, 'Email o contraseña incorrectos');
+      throw error(401, conEmail ? 'Email o contraseña incorrectos' : 'Matrícula o contraseña incorrectas');
     }
     intentosFallidos.delete(clave);
     if (!usuario.habilitado) throw error(403, 'Tu cuenta está inhabilitada. Escribinos para reactivarla.');
@@ -215,24 +235,47 @@ export function crearApp() {
   });
 
   app.get('/api/yo', requiereSesion, async (req, res) => {
+    // Las marcas propias del agente no cuentan para el límite del plan
     const { rows } = await query(
-      'SELECT count(*)::int AS usados FROM terminos_monitoreados WHERE usuario_id = $1',
+      `SELECT count(*) FILTER (WHERE marca_dinapi_id IS NULL)::int AS usados,
+              count(*) FILTER (WHERE marca_dinapi_id IS NOT NULL)::int AS de_agente
+       FROM terminos_monitoreados WHERE usuario_id = $1`,
       [req.usuario.id]
     );
+    const { matricula, matricula_verificada } = req.usuario;
     res.json({
       nombre: req.usuario.nombre,
       email: req.usuario.email,
       plan: req.usuario.plan_pago,
       limite: LIMITES_PLAN[req.usuario.plan_pago] ?? null,
       usados: rows[0].usados,
+      marcas_de_agente: rows[0].de_agente,
       recibir_avisos: req.usuario.recibir_avisos,
       es_admin: req.usuario.es_admin,
+      matricula,
+      matricula_verificada,
+      agente: matricula ? (await datosDeMatricula(matricula)).agente : null,
     });
   });
 
   app.patch('/api/yo', requiereSesion, async (req, res) => {
-    if (typeof req.body?.recibir_avisos !== 'boolean') throw error(400, 'Falta recibir_avisos (true o false)');
-    await query('UPDATE usuarios SET recibir_avisos = $2 WHERE id = $1', [req.usuario.id, req.body.recibir_avisos]);
+    const { recibir_avisos, matricula } = req.body ?? {};
+    if (recibir_avisos === undefined && matricula === undefined) throw error(400, 'Nada para cambiar');
+    if (recibir_avisos !== undefined && typeof recibir_avisos !== 'boolean') {
+      throw error(400, 'recibir_avisos tiene que ser true o false');
+    }
+    // Declarar (o corregir) la matrícula de agente. Una ya verificada solo la cambia un admin.
+    let nueva = null;
+    if (matricula !== undefined) {
+      if (req.usuario.matricula_verificada) throw error(400, 'Tu matrícula ya está verificada. Para cambiarla escribinos.');
+      nueva = String(matricula ?? '').trim() ? await matriculaDeclarada(matricula) : null;
+    }
+    await query(
+      `UPDATE usuarios SET recibir_avisos = COALESCE($2, recibir_avisos),
+                           matricula = CASE WHEN $3 THEN $4 ELSE matricula END
+       WHERE id = $1`,
+      [req.usuario.id, recibir_avisos ?? null, matricula !== undefined, nueva]
+    );
     res.json({ ok: true });
   });
 
@@ -255,12 +298,14 @@ export function crearApp() {
   app.get('/api/terminos', requiereSesion, async (req, res) => {
     const { rows } = await query(
       `SELECT t.id, t.texto_buscar AS texto, t.clase_niza AS clase, t.creado_el,
+              m.nro_expediente AS expediente_agente,
               count(a.id) FILTER (WHERE NOT a.revisada)::int AS alertas_pendientes
        FROM terminos_monitoreados t
+       LEFT JOIN marcas_dinapi m ON m.id = t.marca_dinapi_id
        LEFT JOIN alertas a ON a.termino_id = t.id
        WHERE t.usuario_id = $1
-       GROUP BY t.id
-       ORDER BY t.creado_el`,
+       GROUP BY t.id, m.nro_expediente
+       ORDER BY t.marca_dinapi_id IS NOT NULL, t.creado_el, t.texto_buscar`,
       [req.usuario.id]
     );
     res.json(rows);
@@ -280,7 +325,7 @@ export function crearApp() {
       );
       const limite = LIMITES_PLAN[u[0].plan_pago] ?? null;
       const { rows: actuales } = await client.query(
-        `SELECT count(*)::int AS total,
+        `SELECT count(*) FILTER (WHERE marca_dinapi_id IS NULL)::int AS total,
                 count(*) FILTER (WHERE normalizar_marca(texto_buscar) = normalizar_marca($2)
                                    AND clase_niza IS NOT DISTINCT FROM $3)::int AS repetidos
          FROM terminos_monitoreados WHERE usuario_id = $1`,
@@ -325,6 +370,14 @@ export function crearApp() {
     );
     if (!rows.length) throw error(404, 'No encontrada');
     res.json(await buscarMarcasSimilares(rows[0].texto_buscar, { clase: rows[0].clase_niza, limite: 30 }));
+  });
+
+  // --- Vencimientos (agentes con matrícula verificada) ---------------------
+  app.get('/api/vencimientos', requiereSesion, async (req, res) => {
+    if (!req.usuario.matricula_verificada) throw error(403, 'Solo para agentes con matrícula verificada');
+    const anio = req.query.anio === undefined ? new Date().getFullYear() : Number(req.query.anio);
+    if (!Number.isInteger(anio) || anio < 1900 || anio > 2200) throw error(400, 'Año inválido');
+    res.json({ anio, marcas: await vencimientosDelAgente(req.usuario.matricula, anio) });
   });
 
   // --- Alertas -------------------------------------------------------------
@@ -380,26 +433,38 @@ export function crearApp() {
     const buscar = String(req.query.buscar ?? '').trim().slice(0, 100);
     const { rows } = await query(
       `SELECT u.id, u.email, u.nombre, u.plan_pago AS plan, u.habilitado, u.es_admin,
-              u.recibir_avisos, u.creado_el,
+              u.recibir_avisos, u.creado_el, u.matricula, u.matricula_verificada,
+              (SELECT mode() WITHIN GROUP (ORDER BY m.agente) FROM marcas_dinapi m
+                WHERE u.matricula IS NOT NULL
+                  AND normalizar_matricula(m.matricula_agente) = u.matricula) AS agente_dinapi,
               (SELECT count(*) FROM terminos_monitoreados t WHERE t.usuario_id = u.id)::int AS marcas,
               (SELECT count(*) FROM alertas a JOIN terminos_monitoreados t ON t.id = a.termino_id
                 WHERE t.usuario_id = u.id)::int AS alertas
        FROM usuarios u
        WHERE $1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.nombre ILIKE '%' || $1 || '%'
-       ORDER BY u.creado_el DESC
+          OR u.matricula = normalizar_matricula($1)
+       -- Primero las matrículas que esperan verificación
+       ORDER BY (u.matricula IS NOT NULL AND NOT u.matricula_verificada) DESC, u.creado_el DESC
        LIMIT 500`,
       [buscar.replace(/[\\%_]/g, '\\$&')]
     );
     res.json(rows);
   });
 
-  // Cambiar plan o inhabilitar/reactivar una cuenta
+  // Cambiar plan, inhabilitar/reactivar una cuenta o verificar su matrícula de agente
   app.patch('/api/admin/usuarios/:id', requiereAdmin, async (req, res) => {
     if (!ES_UUID.test(req.params.id)) throw error(404, 'No encontrado');
-    const { plan, habilitado } = req.body ?? {};
+    const { plan, habilitado, matricula_verificada } = req.body ?? {};
     if (plan !== undefined && !(plan in LIMITES_PLAN)) throw error(400, 'Plan inválido (FREE o PREMIUM)');
     if (habilitado !== undefined && typeof habilitado !== 'boolean') throw error(400, 'habilitado tiene que ser true o false');
-    if (plan === undefined && habilitado === undefined) throw error(400, 'Nada para cambiar');
+    if (matricula_verificada !== undefined && typeof matricula_verificada !== 'boolean') {
+      throw error(400, 'matricula_verificada tiene que ser true o false');
+    }
+    if (plan === undefined && habilitado === undefined && matricula_verificada === undefined) throw error(400, 'Nada para cambiar');
+    if (matricula_verificada !== undefined) {
+      if (plan !== undefined || habilitado !== undefined) throw error(400, 'La matrícula se verifica por separado');
+      return res.json(await verificarMatricula(req.params.id, matricula_verificada));
+    }
     if (req.params.id === req.usuario.id && habilitado === false) throw error(400, 'No podés inhabilitar tu propia cuenta');
 
     const { rowCount } = await query(
@@ -412,6 +477,45 @@ export function crearApp() {
     if (habilitado === false) await query('DELETE FROM sesiones WHERE usuario_id = $1', [req.params.id]);
     res.json({ ok: true });
   });
+
+  // Verificar: la cuenta puede entrar con la matrícula y se cargan todas sus
+  // marcas. Quitar la verificación: se quitan las marcas que se cargaron solas.
+  async function verificarMatricula(usuarioId, verificar) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        'SELECT matricula FROM usuarios WHERE id = $1 FOR UPDATE',
+        [usuarioId]
+      );
+      if (!rows.length) throw error(404, 'No encontrado');
+      if (!rows[0].matricula) throw error(400, 'Esa cuenta no declaró una matrícula');
+      let agregadas = 0;
+      if (verificar) {
+        const { rows: otro } = await client.query(
+          'SELECT email FROM usuarios WHERE matricula = $1 AND matricula_verificada AND id <> $2',
+          [rows[0].matricula, usuarioId]
+        );
+        if (otro.length) throw error(409, `La matrícula ${rows[0].matricula} ya está verificada en la cuenta ${otro[0].email}`);
+        await client.query('UPDATE usuarios SET matricula_verificada = true WHERE id = $1', [usuarioId]);
+        agregadas = await vigilarMarcasDelAgente(usuarioId, { client });
+      } else {
+        await client.query('UPDATE usuarios SET matricula_verificada = false WHERE id = $1', [usuarioId]);
+        await client.query(
+          'DELETE FROM terminos_monitoreados WHERE usuario_id = $1 AND marca_dinapi_id IS NOT NULL',
+          [usuarioId]
+        );
+      }
+      await client.query('COMMIT');
+      return { ok: true, marcas_agregadas: agregadas };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (err.code === '23505') throw error(409, 'Esa matrícula ya está verificada en otra cuenta');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 
   // Borra la cuenta con sus marcas, alertas y sesiones (no se puede deshacer)
   app.delete('/api/admin/usuarios/:id', requiereAdmin, async (req, res) => {

@@ -18,6 +18,7 @@ import { parse } from 'csv-parse';
 import { enTransaccion, query, cerrarPool } from './db.js';
 import { env, envNumero } from './config.js';
 import { generarAlertasParaMarca } from './moduloAlertas.js';
+import { vigilarMarcaNuevaDeAgente } from './agentes.js';
 import { registrarError } from './registro.js';
 import { enviarAvisosPendientes } from './notificador.js';
 
@@ -234,7 +235,7 @@ const SQL_INSERTAR_MARCA = `
                              tipo_tramite, referencia, origen)
   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
   ON CONFLICT (nro_expediente) DO NOTHING
-  RETURNING id, nro_expediente, nombre_marca, clase_niza, tipo_tramite`;
+  RETURNING id, nro_expediente, nombre_marca, clase_niza, tipo_tramite, matricula_agente`;
 
 // Las renovaciones son marcas que ya existían: no generan alertas nuevas.
 // Las marcas figurativas (sin denominación) no tienen texto que comparar.
@@ -270,6 +271,8 @@ async function procesarFila(marca, opciones) {
       opciones.origen ?? null,
     ]);
     if (rows.length === 0) return { nueva: false, alertas: [] }; // duplicada
+    // Si el agente que la presentó tiene cuenta, la marca pasa a ser vigilada por él
+    await vigilarMarcaNuevaDeAgente(rows[0], { client });
     // sinAlertas: carga del histórico, solo para tener la base de antecedentes
     if (opciones.sinAlertas || !generaAlertas(rows[0])) return { nueva: true, alertas: [], sinMotor: true, marca: rows[0] };
     const alertas = await generarAlertasParaMarca(rows[0], { client, umbral: opciones.umbral });

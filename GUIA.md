@@ -19,6 +19,7 @@ alertas-marcas/
 │   ├── procesadorBoletin.js  lee el CSV o Excel, guarda marcas y llama al motor
 │   ├── notificador.js      avisos por email de las alertas nuevas
 │   ├── servidor.js         página web + API (registro, ingreso, marcas, alertas)
+│   ├── agentes.js          agentes de marcas: sus marcas de la DINAPI se vigilan solas
 │   ├── hacerAdmin.js       da o quita permiso de administrador (npm run admin)
 │   ├── config.js           lee la configuración del .env
 │   ├── registro.js         registro de errores en logs/
@@ -303,7 +304,7 @@ El plan se cambia desde la sección **Administración** de la página (ver abajo
 - Ingresar / Crear cuenta.
 - **Mis marcas vigiladas**: agregar, quitar y "Ver parecidas ya registradas" (busca en todas las marcas cargadas de la DINAPI).
 - **Alertas**: las coincidencias de los boletines nuevos; se marcan como revisadas.
-- **Mi cuenta**: activar o desactivar avisos por email y cambiar la contraseña.
+- **Mi cuenta**: activar o desactivar avisos por email, declarar la matrícula de agente y cambiar la contraseña.
 
 ### Administración
 Las cuentas con permiso de administrador ven arriba de todo la sección
@@ -325,6 +326,41 @@ npm run admin -- kekoaranda@gmail.com
 npm run admin -- otra@persona.com --quitar     # para quitarlo
 ```
 
+### Agentes de marcas (acceso con matrícula)
+Cada marca del boletín trae el agente y su **matrícula** (columna `matricula_agente`
+de `marcas_dinapi`; en el CSV viene como `7.152` y en el Excel como `7152`, se
+comparan solo los dígitos). Un agente no tiene que cargar sus marcas a mano:
+
+1. Se registra con email y contraseña y completa **Matrícula de agente** (o la
+   agrega después en **Mi cuenta > Soy agente de marcas**). Solo se acepta una
+   matrícula que aparezca en los boletines cargados.
+2. Un administrador la confirma con **Verificar matrícula** en la sección
+   Administración (al lado se ve el nombre del agente según la DINAPI).
+   Hace falta porque la matrícula sale publicada en el boletín: si alcanzara
+   con escribirla, cualquiera podría ver las marcas de otro agente.
+3. Desde ese momento:
+   - Puede ingresar escribiendo su **matrícula** (o su email) y su contraseña.
+   - Todas sus marcas de la DINAPI quedan como **marcas vigiladas** (con la
+     etiqueta "Tuya, exp. ..."). Una marca con el mismo nombre y clase entra
+     una sola vez (ej: la original y su renovación); las figurativas no entran.
+   - Cada marca nueva que presente se agrega sola al cargar el boletín.
+   - No recibe alertas por las marcas que presenta él mismo.
+   - Estas marcas **no cuentan para el límite del plan**. Si quita una, no vuelve.
+
+**Vencimientos**: el agente ve la tarjeta **Marcas que vencen en ...** con
+sus marcas que vencen en el año elegido (por defecto el actual) y un botón
+**Imprimir** que imprime solo esa lista. Por cada marca (mismo nombre y clase)
+cuenta el trámite más reciente, así una marca ya renovada no aparece. El
+vencimiento sale de `marcas_dinapi.fecha_vencimiento`, o `fecha_concesion` + 10
+años, y si no hay ninguna de las dos se **estima** como fecha de solicitud + 10
+años (sale con `*`). El boletín de Marcas Recibidas solo trae la solicitud, y
+hay CSV desde 2021, así que para ver vencimientos reales hay que cargar esas
+dos columnas desde la migración o el dataset de marcas registradas.
+
+**Quitar matrícula** (Administración) le quita el acceso con matrícula y deja
+de vigilar las marcas que se cargaron solas. Una matrícula verificada
+pertenece a una sola cuenta.
+
 ### App instalable (PWA) en PC y celular
 Es una sola página que se adapta a la pantalla y se puede instalar como app:
 - **PC y Android (Chrome o Edge)**: aparece el botón "Instalar app" arriba (o el ícono de instalar en la barra de direcciones).
@@ -337,24 +373,26 @@ Al cambiar archivos de `public/`, subir el número de `VERSION` en `public/sw.js
 ### API (todo en JSON)
 | Ruta | Qué hace |
 |---|---|
-| `POST /api/registro` | crea la cuenta (nombre, email, password) y deja la sesión abierta |
-| `POST /api/ingreso` / `POST /api/salir` | iniciar y cerrar sesión |
-| `GET` / `PATCH /api/yo` | datos de la cuenta, plan y uso; activar o desactivar avisos |
+| `POST /api/registro` | crea la cuenta (nombre, email, password y opcional matricula) y deja la sesión abierta |
+| `POST /api/ingreso` / `POST /api/salir` | iniciar sesión (`usuario`: email o matrícula verificada, y password) y cerrarla |
+| `GET` / `PATCH /api/yo` | datos de la cuenta, plan y uso; activar o desactivar avisos (`recibir_avisos`); declarar la `matricula` |
 | `POST /api/cambiar-password` | cambia la contraseña y cierra las otras sesiones |
 | `GET` / `POST /api/terminos` | listar y agregar marcas vigiladas (respeta el límite del plan) |
 | `DELETE /api/terminos/:id` | quitar una marca (y sus alertas) |
 | `GET /api/terminos/:id/similares` | marcas parecidas ya presentadas |
 | `GET /api/alertas?estado=pendientes\|todas` | alertas del cliente |
+| `GET /api/vencimientos?anio=` | marcas del agente que vencen en el año (solo matrícula verificada) |
 | `PATCH /api/alertas/:id` | marcar revisada o pendiente |
 | `GET /api/admin/resumen` | totales (solo administradores) |
 | `GET /api/admin/usuarios?buscar=` | lista de clientes (solo administradores) |
-| `PATCH /api/admin/usuarios/:id` | cambiar `plan` o `habilitado` (solo administradores) |
+| `PATCH /api/admin/usuarios/:id` | cambiar `plan` o `habilitado`, o verificar la matrícula (`matricula_verificada`) (solo administradores) |
 | `DELETE /api/admin/usuarios/:id` | borrar una cuenta (solo administradores) |
 | `GET /api/salud` | responde `{"ok":true}` |
 
 ### Seguridad
 - Contraseñas con bcrypt; la sesión es una cookie `httpOnly` y en la base solo se guarda un hash del token (tabla `sesiones`, 30 días).
-- Máximo 10 intentos de ingreso cada 15 minutos por IP y email.
+- Máximo 10 intentos de ingreso cada 15 minutos por IP y email (o matrícula).
+- Solo se puede entrar con una matrícula que verificó un administrador.
 - Cada cliente solo ve y toca sus propias marcas y alertas.
 - La página no usa `innerHTML`: un nombre de marca raro no puede inyectar código.
 

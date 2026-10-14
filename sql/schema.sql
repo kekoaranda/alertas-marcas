@@ -191,3 +191,43 @@ CREATE INDEX IF NOT EXISTS sesiones_expira_idx  ON sesiones (expira_el);
 ALTER TABLE usuarios
     ADD COLUMN IF NOT EXISTS es_admin   BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS habilitado BOOLEAN NOT NULL DEFAULT true;
+
+-- 6) Agentes de marcas (acceso con matrícula) ----------------------------
+-- El boletín trae la matrícula del agente en cada marca ("7.152" en el CSV,
+-- 7152 en el Excel). Se compara solo con los dígitos, sin ceros adelante.
+CREATE OR REPLACE FUNCTION normalizar_matricula(texto TEXT)
+RETURNS TEXT
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT nullif(ltrim(regexp_replace(texto, '[^0-9]', '', 'g'), '0'), '')
+$$;
+
+CREATE INDEX IF NOT EXISTS marcas_matricula_idx
+    ON marcas_dinapi (normalizar_matricula(matricula_agente));
+
+-- matricula: la que declaró el usuario (ya normalizada).
+-- matricula_verificada: un admin confirmó que es suya. Recién ahí puede
+-- entrar con la matrícula y se le cargan sus marcas. La matrícula sale
+-- publicada en el boletín, por eso no alcanza con que alguien la escriba.
+ALTER TABLE usuarios
+    ADD COLUMN IF NOT EXISTS matricula            TEXT,
+    ADD COLUMN IF NOT EXISTS matricula_verificada BOOLEAN NOT NULL DEFAULT false;
+-- Una matrícula verificada pertenece a una sola cuenta
+CREATE UNIQUE INDEX IF NOT EXISTS usuarios_matricula_unica
+    ON usuarios (matricula) WHERE matricula_verificada;
+
+-- Marca vigilada que se cargó sola porque es del agente (NULL = la cargó
+-- el usuario a mano). No cuenta para el límite del plan.
+ALTER TABLE terminos_monitoreados
+    ADD COLUMN IF NOT EXISTS marca_dinapi_id UUID REFERENCES marcas_dinapi(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS terminos_marca_agente_unica
+    ON terminos_monitoreados (usuario_id, marca_dinapi_id);
+
+-- 7) Vencimientos ---------------------------------------------------------
+-- El boletín de Marcas Recibidas solo trae la fecha de solicitud. Si la
+-- migración o el dataset de marcas registradas traen la concesión o el
+-- vencimiento, se guardan acá y tienen prioridad. Si no, el vencimiento se
+-- estima como solicitud + 10 años (ver src/agentes.js).
+ALTER TABLE marcas_dinapi
+    ADD COLUMN IF NOT EXISTS fecha_concesion   DATE,
+    ADD COLUMN IF NOT EXISTS fecha_vencimiento DATE;
