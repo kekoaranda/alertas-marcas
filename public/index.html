@@ -64,6 +64,17 @@
         <input id="admin-buscar" type="search" placeholder="Buscar cliente por nombre o email" aria-label="Buscar cliente">
         <p id="error-admin" class="error" role="alert"></p>
         <div id="admin-usuarios"></div>
+        <details>
+          <summary>Cargar planilla de la DINAPI</summary>
+          <form id="form-planilla" class="apilado">
+            <p class="sutil">El Excel que baja el agente del sistema de la DINAPI, o un boletín en CSV o Excel.
+              Las marcas que ya estaban se saltean; las nuevas generan alertas.</p>
+            <label>Archivo <input name="archivo" type="file" accept=".xlsx,.csv" required></label>
+            <label class="check"><input type="checkbox" name="avisos" checked> Enviar los avisos por email al terminar</label>
+            <button type="submit">Cargar</button>
+            <p id="msg-planilla" class="sutil" role="status"></p>
+          </form>
+        </details>
       </div>
 
       <div class="tarjeta">

@@ -36,18 +36,24 @@ export { registrarError };
 //   Signo: D (denominativa), M (mixta), F (figurativa, sin denominación).
 //   Trámite: "Registro de Marca" o "Renovación de Marca" (Referencia = registro anterior).
 // ---------------------------------------------------------------------
+// Los nombres "de_..." (Nro. de Expediente, Fecha de Solicitud...) son para
+// las planillas que bajan los agentes del sistema de la DINAPI.
 const ALIAS_COLUMNAS = {
-  nro_expediente: ['nro_expediente', 'expediente', 'numero_expediente', 'nro_exp', 'n_expediente', 'nro_solicitud'],
-  nombre_marca: ['nombre_marca', 'denominacion', 'marca', 'nombre'],
-  clase_niza: ['clase_niza', 'clase', 'clase_internacional', 'clase_nro'],
-  estado_tramite: ['estado_tramite', 'estado', 'situacion'],
-  fecha_ingreso: ['fecha_solicitud', 'fecha_ingreso', 'fecha', 'fecha_presentacion'],
-  tipo_signo: ['signo', 'tipo_signo', 'tipo'],
-  titular: ['titular', 'solicitante'],
-  pais_titular: ['pais', 'pais_titular'],
-  agente: ['agente', 'apoderado'],
-  matricula_agente: ['matricula', 'matricula_agente'],
-  tipo_tramite: ['tramite', 'tipo_tramite'],
+  nro_expediente: ['nro_expediente', 'expediente', 'numero_expediente', 'nro_exp', 'n_expediente', 'nro_solicitud',
+    'nro_de_expediente', 'numero_de_expediente', 'n_de_expediente', 'expediente_nro', 'nro_de_solicitud',
+    'numero_de_solicitud', 'solicitud'],
+  nombre_marca: ['nombre_marca', 'denominacion', 'marca', 'nombre', 'denominacion_de_la_marca', 'nombre_de_la_marca',
+    'signo_distintivo'],
+  clase_niza: ['clase_niza', 'clase', 'clase_internacional', 'clase_nro', 'clase_de_niza'],
+  estado_tramite: ['estado_tramite', 'estado', 'situacion', 'estado_del_tramite', 'estado_actual'],
+  fecha_ingreso: ['fecha_solicitud', 'fecha_ingreso', 'fecha', 'fecha_presentacion', 'fecha_de_solicitud',
+    'fecha_de_presentacion', 'fecha_de_ingreso'],
+  tipo_signo: ['signo', 'tipo_signo', 'tipo', 'tipo_de_signo', 'tipo_de_marca'],
+  titular: ['titular', 'solicitante', 'titulares', 'nombre_del_titular'],
+  pais_titular: ['pais', 'pais_titular', 'pais_del_titular'],
+  agente: ['agente', 'apoderado', 'nombre_del_agente', 'agente_de_propiedad_industrial'],
+  matricula_agente: ['matricula', 'matricula_agente', 'matricula_del_agente', 'nro_matricula'],
+  tipo_tramite: ['tramite', 'tipo_tramite', 'tipo_de_tramite'],
   referencia: ['referencia', 'registro_anterior'],
 };
 
@@ -73,7 +79,7 @@ function crearMapeador(encabezados) {
   const faltan = ['nro_expediente', 'nombre_marca'].filter((c) => indices[c] === -1);
   if (faltan.length) {
     throw new Error(
-      `El CSV no tiene las columnas obligatorias: ${faltan.join(', ')}. ` +
+      `El archivo no tiene las columnas obligatorias: ${faltan.join(', ')}. ` +
         `Encabezados recibidos: ${encabezados.join(' | ')}`
     );
   }
@@ -184,6 +190,11 @@ function filasDeCsv(entrada, encoding) {
 const esXlsx = (entrada) =>
   (Buffer.isBuffer(entrada) || entrada instanceof Uint8Array) &&
   entrada[0] === 0x50 && entrada[1] === 0x4b && entrada[2] === 0x03 && entrada[3] === 0x04;
+
+// Un .xls (Excel 97-2003) empieza con D0 CF 11 E0. exceljs no lo lee.
+const esXlsViejo = (entrada) =>
+  (Buffer.isBuffer(entrada) || entrada instanceof Uint8Array) &&
+  entrada[0] === 0xd0 && entrada[1] === 0xcf && entrada[2] === 0x11 && entrada[3] === 0xe0;
 
 // Excel guarda números y fechas con tipo; se pasan a texto como en el CSV.
 function celdaATexto(valor) {
@@ -315,6 +326,9 @@ export async function procesarBoletin(entrada, opciones = {}) {
   };
 
   try {
+    if (esXlsViejo(entrada)) {
+      throw new Error('Es un Excel viejo (.xls). Abrilo en Excel y guardalo como "Libro de Excel (.xlsx)".');
+    }
     const parser =
       formato === 'xlsx' || (formato === 'auto' && esXlsx(entrada))
         ? await filasDeXlsx(entrada)
