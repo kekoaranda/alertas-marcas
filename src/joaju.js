@@ -18,8 +18,8 @@
 //       por fecha: solo si --probar encontró un formato de fecha que filtra
 //   --maximo N   corta después de N consultas (por defecto JOAJU_MAXIMO_CONSULTAS o 200)
 //   --hasta-terminar  sin tope de consultas; si el sitio se cae, espera
-//       JOAJU_ESPERA_ERROR_MS (5 min) y reintenta hasta JOAJU_REINTENTOS_ERROR
-//       veces (12). Si se corta, volver a correr lo mismo: --completar sigue
+//       JOAJU_ESPERA_ERROR_MS (5 min, después 10, 15... hasta 30) y reintenta
+//       hasta JOAJU_REINTENTOS_ERROR veces (24, unas 10 horas). Si se corta, volver a correr lo mismo: --completar sigue
 //       donde quedó porque saltea lo ya consultado.
 //
 // Probado contra el servicio real (15/10/2026): la búsqueda por número de
@@ -424,7 +424,7 @@ async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
   // espera y reintenta el mismo tramo en vez de cortar.
   const maximo = opciones.maximo ?? (hastaTerminar ? Infinity : envNumero('JOAJU_MAXIMO_CONSULTAS', 200));
   const esperaError = envNumero('JOAJU_ESPERA_ERROR_MS', 5 * 60_000);
-  const reintentosError = hastaTerminar ? envNumero('JOAJU_REINTENTOS_ERROR', 12) : 0;
+  const reintentosError = hastaTerminar ? envNumero('JOAJU_REINTENTOS_ERROR', 24) : 0;
   const t = TRAMOS[unidad];
   const pendientes = [...tramos];
   const total = tramos.length;
@@ -443,9 +443,13 @@ async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
     } catch (err) {
       if (fallosSeguidos < reintentosError) {
         fallosSeguidos++;
-        console.log(`[joaju] ${hora()} El sitio no respondió (${err.message}); reintento ${fallosSeguidos}/${reintentosError} en ${Math.round(esperaError / 1000)} s`);
+        // Espera cada vez más (5, 10, 15... hasta 30 min): con 24 reintentos
+        // aguanta unas 10 horas de caída de la DINAPI.
+        const espera = Math.min(esperaError * fallosSeguidos, 6 * esperaError);
+        const motivo = err.message.split('\n')[0].slice(0, 80);
+        console.log(`[joaju] ${hora()} El sitio no respondió (${motivo}); reintento ${fallosSeguidos}/${reintentosError} en ${Math.round(espera / 1000)} s`);
         pendientes.unshift([a, b]);
-        await esperar(esperaError);
+        await esperar(espera);
         continue;
       }
       resumen.ok = false;

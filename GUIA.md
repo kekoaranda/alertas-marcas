@@ -252,7 +252,7 @@ nohup npm run joaju -- --completar --hasta-terminar > ~/joaju-completar.log 2>&1
 tail -f ~/joaju-completar.log                      # Ctrl+C deja de mirar, no lo corta
 ```
 
-- `--hasta-terminar` no tiene tope de consultas, muestra el avance cada 50 consultas y, si el sitio no responde, espera `JOAJU_ESPERA_ERROR_MS` (5 min) y reintenta hasta `JOAJU_REINTENTOS_ERROR` veces (12). Si igual se corta, volver a lanzar el mismo comando: sigue donde quedó.
+- `--hasta-terminar` no tiene tope de consultas, muestra el avance cada 50 consultas y, si el sitio no responde, espera `JOAJU_ESPERA_ERROR_MS` (5 min, y cada vez más hasta 30 min) y reintenta hasta `JOAJU_REINTENTOS_ERROR` veces (24, unas 10 horas de caída). Si igual se corta, volver a lanzar el mismo comando: sigue donde quedó.
 - Las marcas que Joaju no devuelve quedan igual como consultadas, para no pedirlas en cada vuelta.
 
 - `--probar` busca un expediente que ya está cargado y muestra cómo lo guardaría (sin el logo). Si dice **ATENCIÓN**, no cargar nada.
