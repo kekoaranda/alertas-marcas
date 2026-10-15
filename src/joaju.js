@@ -17,6 +17,10 @@
 //   node --env-file=.env src/joaju.js --solicitudes / --vencen AAAA-MM-DD AAAA-MM-DD
 //       por fecha: solo si --probar encontró un formato de fecha que filtra
 //   --maximo N   corta después de N consultas (por defecto JOAJU_MAXIMO_CONSULTAS o 200)
+//   --hasta-terminar  sin tope de consultas; si el sitio se cae, espera
+//       JOAJU_ESPERA_ERROR_MS (5 min, después 10, 15... hasta 30) y reintenta
+//       hasta JOAJU_REINTENTOS_ERROR veces (24, unas 10 horas). Si se corta, volver a correr lo mismo: --completar sigue
+//       donde quedó porque saltea lo ya consultado.
 //
 // Probado contra el servicio real (15/10/2026): la búsqueda por número de
 // expediente funciona; la búsqueda por fecha no filtra con ningún formato
@@ -152,6 +156,7 @@ export const criterios = {
 // ---------------------------------------------------------------------
 // Consulta: una a la vez, con pausa, y reintentos si el sitio falla.
 // ---------------------------------------------------------------------
+const hora = () => new Date().toLocaleString('es-PY', { timeZone: 'America/Asuncion' });
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 let ultimaConsulta = 0;
 
@@ -406,10 +411,24 @@ function nuevoResumen(tipo, desde, hasta) {
   };
 }
 
+// Al terminar un tramo de expedientes, todas las marcas de la base dentro del
+// tramo quedan como consultadas, también las que Joaju no devolvió: así
+// --completar no las vuelve a pedir en cada vuelta.
+const SQL_TRAMO_CONSULTADO = `
+  UPDATE marcas_dinapi SET joaju_consultado_el = now()
+   WHERE nro_expediente ~ '^[0-9]{7}$' AND nro_expediente::bigint BETWEEN $1 AND $2`;
+
 async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
-  const { maximo = envNumero('JOAJU_MAXIMO_CONSULTAS', 200), sinAlertas = false } = opciones;
+  const { hastaTerminar = false, sinAlertas = false } = opciones;
+  // --hasta-terminar no tiene tope de consultas y, si el sitio no responde,
+  // espera y reintenta el mismo tramo en vez de cortar.
+  const maximo = opciones.maximo ?? (hastaTerminar ? Infinity : envNumero('JOAJU_MAXIMO_CONSULTAS', 200));
+  const esperaError = envNumero('JOAJU_ESPERA_ERROR_MS', 5 * 60_000);
+  const reintentosError = hastaTerminar ? envNumero('JOAJU_REINTENTOS_ERROR', 24) : 0;
   const t = TRAMOS[unidad];
   const pendientes = [...tramos];
+  const total = tramos.length;
+  let fallosSeguidos = 0;
   while (pendientes.length) {
     if (resumen.consultas >= maximo) {
       resumen.ok = false;
@@ -422,6 +441,17 @@ async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
     try {
       respuesta = await consultar(criterios[tipo](a, b));
     } catch (err) {
+      if (fallosSeguidos < reintentosError) {
+        fallosSeguidos++;
+        // Espera cada vez más (5, 10, 15... hasta 30 min): con 24 reintentos
+        // aguanta unas 10 horas de caída de la DINAPI.
+        const espera = Math.min(esperaError * fallosSeguidos, 6 * esperaError);
+        const motivo = err.message.split('\n')[0].slice(0, 80);
+        console.log(`[joaju] ${hora()} El sitio no respondió (${motivo}); reintento ${fallosSeguidos}/${reintentosError} en ${Math.round(espera / 1000)} s`);
+        pendientes.unshift([a, b]);
+        await esperar(espera);
+        continue;
+      }
       resumen.ok = false;
       resumen.error = `${a} a ${b}: ${err.message}`;
       resumen.cortado = `El sitio no respondió; falta desde ${a}`;
@@ -438,9 +468,15 @@ async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
       pendientes.unshift([a, mitad], [t.siguiente(mitad, 1), b]);
       continue;
     }
+    fallosSeguidos = 0;
     resumen.recibidas += respuesta.registros.length;
     for (const item of respuesta.registros) await guardar(item, resumen, { sinAlertas });
+    if (tipo === 'expedientes') await query(SQL_TRAMO_CONSULTADO, [a, b]);
     console.log(`[joaju] ${a} a ${b}: ${respuesta.registros.length} marcas`);
+    if (hastaTerminar && resumen.consultas % 50 === 0) {
+      console.log(`[joaju] ${hora()} Avance: ${resumen.consultas} consultas, ${total - pendientes.length} de ${total} tramos, ` +
+        `${resumen.nuevas} nuevas, ${resumen.conVencimiento} con vencimiento; falta desde ${pendientes[0]?.[0] ?? '-'}`);
+    }
   }
   if (resumen.sinListar.length) resumen.ok = false;
   return resumen;
@@ -565,7 +601,8 @@ const USO = `Uso (empezar siempre por --probar):
   node --env-file=.env src/joaju.js --completar
   node --env-file=.env src/joaju.js --solicitudes AAAA-MM-DD AAAA-MM-DD [--sin-avisos]
   node --env-file=.env src/joaju.js --vencen AAAA-MM-DD AAAA-MM-DD
-  --maximo N   corta después de N consultas`;
+  --maximo N        corta después de N consultas
+  --hasta-terminar  sigue sin tope hasta el final (para dejarlo corriendo con nohup)`;
 
 const ES_FECHA = /^\d{4}-\d{2}-\d{2}$/;
 const ES_EXPEDIENTE = /^\d{7}$/;
@@ -588,6 +625,7 @@ async function main() {
   const valores = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--maximo');
   const iMax = args.indexOf('--maximo');
   const maximo = iMax >= 0 ? Number(args[iMax + 1]) : undefined;
+  const hastaTerminar = banderas.has('--hasta-terminar');
   const [desde, hasta] = valores;
 
   if (banderas.has('--probar')) {
@@ -599,10 +637,10 @@ async function main() {
   let sinAlertas = false;
   if (banderas.has('--expedientes')) {
     if (!ES_EXPEDIENTE.test(desde ?? '') || !ES_EXPEDIENTE.test(hasta ?? '') || +desde > +hasta) return uso();
-    resumen = await recorrerExpedientes(+desde, +hasta, { maximo });
+    resumen = await recorrerExpedientes(+desde, +hasta, { maximo, hastaTerminar });
   } else if (banderas.has('--completar')) {
     sinAlertas = true;
-    resumen = await completarVencimientos({ maximo });
+    resumen = await completarVencimientos({ maximo, hastaTerminar });
   } else if (banderas.has('--solicitudes') || banderas.has('--vencen')) {
     const tipo = banderas.has('--solicitudes') ? 'solicitadas' : 'vencen';
     if (!ES_FECHA.test(desde ?? '') || !ES_FECHA.test(hasta ?? '') || desde > hasta) return uso();
@@ -613,7 +651,7 @@ async function main() {
     }
     // Las marcas que vencen son viejas: se guardan como antecedentes, sin alertas.
     sinAlertas = tipo === 'vencen';
-    resumen = await recorrer(tipo, desde, hasta, { maximo, sinAlertas });
+    resumen = await recorrer(tipo, desde, hasta, { maximo, sinAlertas, hastaTerminar });
   } else {
     return uso();
   }
