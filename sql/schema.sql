@@ -224,10 +224,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS terminos_marca_agente_unica
     ON terminos_monitoreados (usuario_id, marca_dinapi_id);
 
 -- 7) Vencimientos ---------------------------------------------------------
--- El boletín de Marcas Recibidas solo trae la fecha de solicitud. Si la
--- migración o el dataset de marcas registradas traen la concesión o el
--- vencimiento, se guardan acá y tienen prioridad. Si no, el vencimiento se
+-- El boletín de Marcas Recibidas solo trae la fecha de solicitud. La
+-- concesión, el vencimiento y el número de registro reales los completa
+-- src/joaju.js (buscador público de la DINAPI) y tienen prioridad. Si no, el vencimiento se
 -- estima como solicitud + 10 años (ver src/agentes.js).
 ALTER TABLE marcas_dinapi
     ADD COLUMN IF NOT EXISTS fecha_concesion   DATE,
-    ADD COLUMN IF NOT EXISTS fecha_vencimiento DATE;
+    ADD COLUMN IF NOT EXISTS fecha_vencimiento DATE,
+    ADD COLUMN IF NOT EXISTS nro_registro      TEXT;

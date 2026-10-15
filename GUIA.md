@@ -167,7 +167,7 @@ El mismo boletín se publica también en Excel (.xlsx) con las mismas columnas; 
 
 Qué hace con cada tipo: todas las marcas se guardan, pero solo las solicitudes nuevas con denominación se comparan contra los términos. Las renovaciones son marcas que ya existían (avisar sería ruido) y las figurativas no tienen texto que comparar; el resumen las cuenta en `sinComparar`.
 
-Hay otras dos fuentes que no usa este sistema: el buscador [Joaju](https://joaju.dinapi.gov.py/marcas) (consulta de expedientes uno por uno) y el dataset [Marcas registradas en Paraguay](https://www.datos.gov.py/dataset/marcas-registradas-en-paraguay) de datos.gov.py (marcas ya registradas, útil para cargar historia).
+El buscador [Joaju](https://joaju.dinapi.gov.py/marcas) se usa con `npm run joaju` (ver más abajo). El dataset [Marcas registradas en Paraguay](https://www.datos.gov.py/dataset/marcas-registradas-en-paraguay) de datos.gov.py (marcas ya registradas) no se usa todavía.
 
 ### Modo automático (recomendado, para cron)
 
@@ -219,6 +219,32 @@ boletines sigue igual. Las columnas se reconocen por nombre (ver
 los que recibió para agregarlos ahí. Un `.xls` viejo hay que guardarlo antes
 como `.xlsx`. Cada carga queda anotada en `boletines_procesados` como
 `subido:<huella>:<nombre del archivo>`.
+
+### Buscador público de la DINAPI (Joaju): solicitudes al día y vencimientos reales
+
+[Joaju](https://joaju.dinapi.gov.py/marcas) es el buscador público de marcas
+de la DINAPI. Por detrás consulta un servicio que no pide usuario y que, por
+cada marca, trae solicitud, concesión, vencimiento, número de registro y
+estado. `src/joaju.js` lo usa para:
+
+- **Traer solicitudes que todavía no salieron en boletín** (`--solicitudes`): pasan por el mismo motor que los boletines (alertas, avisos y marcas de agentes).
+- **Completar el vencimiento real** (`--vencen`): guarda concesión, vencimiento y registro. Las marcas que no estaban se guardan como antecedentes, sin alertas, y aparecen en "vencen en el año" de cada agente con la fecha real en vez de la estimada.
+
+Hay que correrlo en el servidor (desde donde ya se bajan los boletines). Siempre empezar por `--probar`, que no guarda nada:
+
+```bash
+npm run db:schema                         # agrega la columna nro_registro
+npm run joaju -- --probar 2692764         # ¿coincide el expediente? ¿qué formato de fecha acepta?
+npm run joaju -- --solicitudes 2026-09-01 2026-09-30
+npm run joaju -- --vencen 2026-10-01 2027-12-31
+```
+
+- `--probar` busca un expediente que ya está cargado y muestra cómo lo guardaría. Si dice **ATENCIÓN**, no cargar nada: el número no coincide con el del boletín y se duplicarían marcas. También prueba los formatos de fecha y dice qué poner en `JOAJU_FORMATO_FECHA`.
+- Consulta de a una, con `JOAJU_PAUSA_MS` (3 s) entre consultas, en tramos de 7 días. Si un tramo trae demasiadas marcas (el servicio responde solo la cantidad), lo parte a la mitad hasta llegar a un día.
+- Corta a las `JOAJU_MAXIMO_CONSULTAS` (200) o si el sitio no responde, y dice desde qué fecha retomar. Repetir un rango es seguro: lo que ya estaba se saltea (y se le completan los datos nuevos).
+- Una marca cuyo expediente no queda con el formato del boletín (7 dígitos, los dos primeros = año de la solicitud) no se guarda; se cuenta en `sinExpediente`.
+- Joaju trae el nombre del agente pero no su matrícula: se toma la que ya figura para ese nombre en los boletines.
+- Si falla con un error de certificado, la DINAPI no envía la cadena completa: bajar el certificado intermedio y usar `NODE_EXTRA_CA_CERTS=/ruta/intermedio.pem` (nunca desactivar la verificación).
 
 ### Limpieza de "Documentos Recibidos" cargados por error
 

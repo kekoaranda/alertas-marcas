@@ -17,6 +17,7 @@
     "procesar:url": "node --env-file=.env src/procesadorBoletin.js --url",
     "procesar:pagina": "node --env-file=.env src/procesadorBoletin.js --pagina",
     "procesar:historico": "node --env-file=.env src/procesadorBoletin.js --pagina --historico",
+    "joaju": "node --env-file=.env src/joaju.js",
     "avisos": "node --env-file=.env src/notificador.js",
     "avisos:probar": "node --env-file=.env src/notificador.js --probar"
   },

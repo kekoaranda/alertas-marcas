@@ -264,7 +264,8 @@ function esErrorDeConexion(err) {
   );
 }
 
-async function procesarFila(marca, opciones) {
+/** Guarda una marca nueva y genera sus alertas (también la usa joaju.js). */
+export async function procesarFila(marca, opciones = {}) {
   return enTransaccion(async (client) => {
     const { rows } = await client.query(SQL_INSERTAR_MARCA, [
       marca.nro_expediente,
