@@ -16,6 +16,8 @@ import bcrypt from 'bcryptjs';
 import { pool, query } from './db.js';
 import { env, envNumero } from './config.js';
 import { buscarMarcasSimilares } from './moduloAlertas.js';
+import { procesarBoletin } from './procesadorBoletin.js';
+import { enviarAvisosPendientes } from './notificador.js';
 import { datosDeMatricula, normalizarMatricula, vencimientosDelAgente, vigilarMarcasDelAgente } from './agentes.js';
 import { registrarError } from './registro.js';
 
@@ -139,6 +141,8 @@ function requiereAdmin(req, _res, next) {
 // ---------------------------------------------------------------------
 // Aplicación
 // ---------------------------------------------------------------------
+const RUTA_CARGAR_PLANILLA = '/admin/cargar-planilla';
+
 export function crearApp() {
   const app = express();
   app.disable('x-powered-by');
@@ -169,7 +173,10 @@ export function crearApp() {
   // La API solo acepta JSON en los pedidos con datos: un formulario de otro
   // sitio no puede enviar JSON, así que esto también frena CSRF. (DELETE no
   // puede venir de un formulario, y la cookie SameSite=Lax no viaja en él.)
+  // Única excepción: la subida de planillas (application/octet-stream), que
+  // tampoco puede salir de un formulario de otro sitio.
   app.use('/api', (req, _res, next) => {
+    if (req.method === 'POST' && req.path === RUTA_CARGAR_PLANILLA && req.is('application/octet-stream')) return next();
     if (['POST', 'PUT', 'PATCH'].includes(req.method) && !req.is('application/json')) {
       throw error(415, 'Se esperaba JSON');
     }
@@ -525,6 +532,41 @@ export function crearApp() {
     if (!rowCount) throw error(404, 'No encontrado');
     res.json({ ok: true });
   });
+
+  // Cargar una planilla de la DINAPI (el Excel que baja el agente del sistema
+  // de la DINAPI, o un boletín CSV/XLSX) mientras los boletines públicos
+  // vengan atrasados. Pasa por el mismo motor que los boletines: las marcas
+  // ya cargadas se saltean y las nuevas generan alertas.
+  app.post(
+    '/api' + RUTA_CARGAR_PLANILLA,
+    requiereAdmin,
+    express.raw({ type: 'application/octet-stream', limit: '25mb' }),
+    async (req, res) => {
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw error(400, 'Elegí un archivo');
+      // El nombre viaja codificado (los encabezados HTTP no aceptan tildes ni ñ)
+      let nombre = req.get('X-Nombre-Archivo') ?? 'planilla';
+      try {
+        nombre = decodeURIComponent(nombre);
+      } catch {
+        // se usa tal cual
+      }
+      nombre = texto(nombre, 'nombre del archivo', { max: 200 });
+      const huella = createHash('sha256').update(req.body).digest('hex').slice(0, 16);
+      const origen = `subido por ${req.usuario.email}: ${nombre}`;
+
+      const resumen = await procesarBoletin(req.body, { origen });
+      // Queda en el historial de cargas junto a los boletines de la página
+      await query(
+        `INSERT INTO boletines_procesados (url, ok, resumen) VALUES ($1, $2, $3)
+         ON CONFLICT (url) DO UPDATE SET ok = EXCLUDED.ok, resumen = EXCLUDED.resumen, procesado_el = now()`,
+        [`subido:${huella}:${nombre}`, resumen.ok, resumen]
+      ).catch((err) => registrarError('Registro de planilla', err, { origen }));
+      if (!resumen.ok) throw error(400, `No se pudo cargar: ${resumen.error}`);
+
+      const avisos = req.query.avisos === 'no' ? null : await enviarAvisosPendientes();
+      res.json({ ...resumen, avisosEnviados: avisos?.enviados ?? 0, avisosFallidos: avisos?.fallidos ?? 0 });
+    }
+  );
 
   app.get('/api/salud', async (_req, res) => {
     await query('SELECT 1');

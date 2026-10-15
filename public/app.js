@@ -478,6 +478,35 @@ function botonAdmin(texto, accion, { confirmar, peligro } = {}) {
 }
 
 let esperaBusqueda;
+$('#form-planilla').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const archivo = form.archivo.files[0];
+  const mensaje = $('#msg-planilla');
+  conBoton(form, async () => {
+    mensaje.textContent = `Cargando ${archivo.name}... puede tardar unos minutos.`;
+    try {
+      const avisos = form.avisos.checked ? 'si' : 'no';
+      const respuesta = await fetch(`/api/admin/cargar-planilla?avisos=${avisos}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Nombre-Archivo': encodeURIComponent(archivo.name) },
+        body: archivo,
+      });
+      const r = await respuesta.json().catch(() => ({}));
+      if (!respuesta.ok) throw new Error(r.error ?? 'Ocurrió un error');
+      mensaje.textContent =
+        `Listo: ${numero(r.leidas)} filas, ${numero(r.nuevas)} marcas nuevas, ${numero(r.duplicadas)} ya estaban` +
+        `, ${numero(r.conError)} con error y ${numero(r.alertas)} alertas nuevas` +
+        (avisos === 'si' ? `. Avisos enviados: ${numero(r.avisosEnviados)}.` : '.');
+      form.reset();
+      await cargarAdmin();
+    } catch (err) {
+      mensaje.textContent = err.message;
+    }
+  });
+});
+
 $('#admin-buscar').addEventListener('input', () => {
   clearTimeout(esperaBusqueda);
   esperaBusqueda = setTimeout(() => cargarAdmin().catch((err) => ($('#error-admin').textContent = err.message)), 300);

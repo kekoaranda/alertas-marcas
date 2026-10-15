@@ -201,6 +201,25 @@ npm run procesar:archivo -- ./boletin-octubre.csv
 npm run procesar:archivo -- ./boletin-octubre.xlsx
 ```
 
+### Planilla del agente (mientras los boletines vengan atrasados)
+
+Los boletines públicos de la DINAPI pueden venir atrasados (en octubre de 2026
+el último en CSV/Excel era de agosto), pero los agentes matriculados ven las
+solicitudes casi al día en el sistema de la DINAPI y pueden bajarlas en Excel.
+Esa planilla se carga igual que un boletín, semanal o mensualmente:
+
+- Desde la página: **Administración > Cargar planilla de la DINAPI**, elegir el `.xlsx` y **Cargar**.
+- Desde la terminal: `npm run procesar:archivo -- ./planilla-agente.xlsx`
+
+Pasa por el mismo motor: las marcas que ya estaban (por número de expediente)
+se saltean, así que cuando después salga el boletín oficial de esas semanas no
+se duplica nada ni se repiten alertas. El motor automático por la página de
+boletines sigue igual. Las columnas se reconocen por nombre (ver
+`ALIAS_COLUMNAS`); si la planilla trae otros encabezados, el error muestra
+los que recibió para agregarlos ahí. Un `.xls` viejo hay que guardarlo antes
+como `.xlsx`. Cada carga queda anotada en `boletines_procesados` como
+`subido:<huella>:<nombre del archivo>`.
+
 ### Limpieza de "Documentos Recibidos" cargados por error
 
 Las versiones anteriores al 07/10/2026 también cargaban los boletines de Documentos Recibidos. Si eso pasó, con un respaldo hecho antes, correr una vez:
@@ -313,6 +332,7 @@ Las cuentas con permiso de administrador ven arriba de todo la sección
 - Totales: clientes, FREE / PREMIUM, inhabilitados, marcas vigiladas, alertas y marcas de la DINAPI cargadas.
 - Lista de clientes con buscador (nombre, email, plan, marcas, alertas, fecha de alta).
 - Botones por cliente: **Pasar a PREMIUM / FREE**, **Inhabilitar / Reactivar** y **Borrar** (pide confirmación).
+- **Cargar planilla de la DINAPI**: sube el Excel del agente o un boletín (ver sección 5).
 
 **Inhabilitar** no borra nada: el cliente no puede entrar (se cierran sus
 sesiones), no se le generan alertas nuevas ni recibe avisos. Al reactivarlo
@@ -387,6 +407,7 @@ Al cambiar archivos de `public/`, subir el número de `VERSION` en `public/sw.js
 | `GET /api/admin/usuarios?buscar=` | lista de clientes (solo administradores) |
 | `PATCH /api/admin/usuarios/:id` | cambiar `plan` o `habilitado`, o verificar la matrícula (`matricula_verificada`) (solo administradores) |
 | `DELETE /api/admin/usuarios/:id` | borrar una cuenta (solo administradores) |
+| `POST /api/admin/cargar-planilla?avisos=si\|no` | carga un `.xlsx` o `.csv` (cuerpo `application/octet-stream`, nombre en `X-Nombre-Archivo`; solo administradores) |
 | `GET /api/salud` | responde `{"ok":true}` |
 
 ### Seguridad
