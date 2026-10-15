@@ -37,7 +37,7 @@
         </div>
 
         <form id="form-ingreso">
-          <label>Email <input name="email" type="email" autocomplete="email" required></label>
+          <label>Email o matrícula de agente <input name="usuario" autocomplete="username" required></label>
           <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
           <button type="submit" class="principal">Ingresar</button>
         </form>
@@ -47,6 +47,8 @@
           <label>Email <input name="email" type="email" autocomplete="email" required></label>
           <label>Contraseña <span class="sutil">(mínimo 8 caracteres)</span>
             <input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="72"></label>
+          <label>Matrícula de agente <span class="sutil">(solo si sos agente de marcas)</span>
+            <input name="matricula" inputmode="numeric" maxlength="20" placeholder="Ej: 7152"></label>
           <button type="submit" class="principal">Crear cuenta gratis</button>
         </form>
         <p id="error-acceso" class="error" role="alert"></p>
@@ -61,7 +63,7 @@
           <span class="plan">Solo lo ves vos</span>
         </div>
         <dl id="admin-totales" class="totales"></dl>
-        <input id="admin-buscar" type="search" placeholder="Buscar cliente por nombre o email" aria-label="Buscar cliente">
+        <input id="admin-buscar" type="search" placeholder="Buscar cliente por nombre, email o matrícula" aria-label="Buscar cliente">
         <p id="error-admin" class="error" role="alert"></p>
         <div id="admin-usuarios"></div>
         <details>
@@ -90,6 +92,7 @@
           <button type="submit" class="principal">Agregar</button>
         </form>
         <p id="error-termino" class="error" role="alert"></p>
+        <p id="info-agente" class="sutil" hidden></p>
         <ul id="lista-terminos" class="lista"></ul>
         <p id="sin-terminos" class="sutil" hidden>Todavía no vigilás ninguna marca. Agregá la primera arriba.</p>
       </div>
@@ -103,9 +106,32 @@
         <p id="sin-alertas" class="sutil" hidden>No hay alertas pendientes. Revisamos cada boletín nuevo de la DINAPI.</p>
       </div>
 
+      <div id="vencimientos" class="tarjeta" hidden>
+        <div class="titulo-fila">
+          <h2 id="venc-titulo">Marcas que vencen</h2>
+          <div class="fila-form no-imprimir">
+            <select id="venc-anio" aria-label="Año de vencimiento"></select>
+            <button id="venc-imprimir" type="button">Imprimir</button>
+          </div>
+        </div>
+        <p id="venc-agente" class="sutil"></p>
+        <p id="error-venc" class="error" role="alert"></p>
+        <div id="venc-lista"></div>
+        <p id="venc-nota" class="sutil chica" hidden>* Vencimiento estimado: fecha de solicitud + 10 años. La DINAPI cuenta los 10 años desde la concesión, así que puede vencer algo más tarde.</p>
+      </div>
+
       <div class="tarjeta">
         <h2>Mi cuenta</h2>
         <label class="check"><input type="checkbox" id="recibir-avisos"> Recibir avisos por email</label>
+        <p id="matricula-estado" class="sutil" hidden></p>
+        <details id="caja-matricula">
+          <summary>Soy agente de marcas</summary>
+          <form id="form-matricula" class="apilado">
+            <label>Matrícula de agente <input name="matricula" inputmode="numeric" maxlength="20" required placeholder="Ej: 7152"></label>
+            <button type="submit">Guardar</button>
+            <p id="msg-matricula" class="sutil" role="status"></p>
+          </form>
+        </details>
         <details>
           <summary>Cambiar contraseña</summary>
           <form id="form-password" class="apilado">
@@ -123,6 +149,7 @@
     <li class="termino">
       <div class="termino-datos">
         <strong class="t-texto"></strong>
+        <span class="t-agente insignia-agente" hidden></span>
         <span class="t-clase sutil"></span>
         <span class="t-alertas insignia" hidden></span>
       </div>

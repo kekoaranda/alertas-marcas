@@ -33,6 +33,7 @@ const ESCAPAR_LIKE = (expr) =>
 //  2. evalúa los criterios contra los términos de la misma clase de Niza
 //     (o sin clase, que vigilan todas): idéntica, parcial (por palabras),
 //     ortográfica (similarity > umbral) y fonética (fonetica_es igual),
+//     (salvo las marcas que presentó el mismo agente que vigila),
 //  3. inserta las alertas (ON CONFLICT evita duplicados si se reprocesa),
 //  4. devuelve las alertas nuevas con el email del usuario, listas para notificar.
 const SQL_BUSCAR_E_INSERTAR = `
@@ -41,7 +42,8 @@ WITH marca AS (
          normalizar_marca($2::text) AS nombre,
          ${PALABRAS('normalizar_marca($2::text)')} AS palabras,
          $3::int AS clase,
-         fonetica_es($2::text) AS fonetica
+         fonetica_es($2::text) AS fonetica,
+         normalizar_matricula($7::text) AS matricula
 ),
 terminos AS (
   SELECT t.id, normalizar_marca(t.texto_buscar) AS texto,
@@ -50,9 +52,11 @@ terminos AS (
   FROM terminos_monitoreados t
   JOIN usuarios u ON u.id = t.usuario_id AND u.habilitado,
        marca m
-  WHERE t.clase_niza IS NULL
-     OR m.clase IS NULL
-     OR t.clase_niza = m.clase
+  WHERE (t.clase_niza IS NULL
+         OR m.clase IS NULL
+         OR t.clase_niza = m.clase)
+    -- Un agente no recibe alertas por las marcas que él mismo presenta
+    AND NOT (u.matricula_verificada AND u.matricula IS NOT DISTINCT FROM m.matricula)
 ),
 evaluados AS (
   SELECT
@@ -108,6 +112,7 @@ ORDER BY n.similitud DESC;
  * @param {string} marca.id
  * @param {string} marca.nombre_marca
  * @param {number|null} [marca.clase_niza]
+ * @param {string|null} [marca.matricula_agente]
  * @param {object} [opciones]
  * @param {import('pg').PoolClient} [opciones.client]  Para usar la misma
  *        transacción que insertó la marca (así no se pierde ninguna alerta).
@@ -133,6 +138,7 @@ export async function generarAlertasParaMarca(marca, opciones = {}) {
     umbral,
     umbralPalabra,
     LARGO_MINIMO_PARCIAL,
+    marca.matricula_agente ?? null,
   ]);
 
   return rows;
