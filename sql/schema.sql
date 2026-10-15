@@ -231,4 +231,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS terminos_marca_agente_unica
 ALTER TABLE marcas_dinapi
     ADD COLUMN IF NOT EXISTS fecha_concesion   DATE,
     ADD COLUMN IF NOT EXISTS fecha_vencimiento DATE,
-    ADD COLUMN IF NOT EXISTS nro_registro      TEXT;
+    ADD COLUMN IF NOT EXISTS nro_registro      TEXT,
+    ADD COLUMN IF NOT EXISTS joaju_consultado_el TIMESTAMPTZ;  -- última consulta a Joaju (npm run joaju -- --completar)

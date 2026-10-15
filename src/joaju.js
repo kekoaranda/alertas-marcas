@@ -9,9 +9,18 @@
 //
 // Uso (siempre empezar por --probar):
 //   node --env-file=.env src/joaju.js --probar [expediente]
-//   node --env-file=.env src/joaju.js --solicitudes 2026-09-01 2026-09-30 [--sin-avisos]
-//   node --env-file=.env src/joaju.js --vencen 2026-10-01 2026-12-31
+//   node --env-file=.env src/joaju.js --expedientes 2681702 2692763 [--sin-avisos]
+//       trae ese rango de expedientes: las nuevas pasan por el motor y a las
+//       que ya estaban se les completan concesión, vencimiento y registro
+//   node --env-file=.env src/joaju.js --completar
+//       vuelve a consultar las marcas ya cargadas que no tienen vencimiento
+//   node --env-file=.env src/joaju.js --solicitudes / --vencen AAAA-MM-DD AAAA-MM-DD
+//       por fecha: solo si --probar encontró un formato de fecha que filtra
 //   --maximo N   corta después de N consultas (por defecto JOAJU_MAXIMO_CONSULTAS o 200)
+//
+// Probado contra el servicio real (15/10/2026): la búsqueda por número de
+// expediente funciona; la búsqueda por fecha no filtra con ningún formato
+// probado (devuelve la base entera), por eso el camino es --expedientes.
 //
 // Se consulta despacio (una consulta cada JOAJU_PAUSA_MS, 3 s por defecto)
 // para no cargar el sitio de la DINAPI.
@@ -118,6 +127,12 @@ export const criterios = {
     const c = criteriosVacios();
     c.criteriaRegistrationData.expirationDateFrom.dateValue = formatearFecha(desde, formato);
     c.criteriaRegistrationData.expirationDateTo.dateValue = formatearFecha(hasta, formato);
+    return c;
+  },
+  expedientes(desde, hasta) {
+    const c = criteriosVacios();
+    c.criteriaFileId.fileNbrFrom.doubleValue = String(desde);
+    c.criteriaFileId.fileNbrTo.doubleValue = String(hasta);
     return c;
   },
   // "completo": fileNbr = 2692764. "serie": fileSeries = 2026 y fileNbr = 92764.
@@ -263,22 +278,31 @@ export function expedienteDe(item, fechaSolicitud) {
 const SIGNOS = { denominativa: 'D', mixta: 'M', figurativa: 'F', tridimensional: 'T' };
 const TRAMITES = { REG: 'Registro de Marca', REN: 'Renovación de Marca' };
 
+// "SUPERVALE VERDE LTDA. [BR]" -> ["SUPERVALE VERDE LTDA.", "BR"]
+function separarPais(valor) {
+  const t = texto(valor);
+  const m = t?.match(/^(.*?)\s*\[([A-Z]{2})\]$/);
+  return m ? [texto(m[1]), m[2]] : [t, null];
+}
+
 export function aMarca(item) {
   const fecha_ingreso = leerFecha(item.fecha);
+  const [titular, pais_titular] = separarPais(item.titular);
+  const [agente] = separarPais(item.agent);
   const clase = String(item.clase ?? '').match(/(\d{1,2})\s*$/) ?? String(item.clase ?? '').match(/\b(\d{1,2})\b/);
   const signo = texto(item.signo);
   const tramite = texto(item.typ);
   return {
-    nro_expediente: expedienteDe(item, fecha_ingreso),
+    nro_expediente: expedienteDe({ fileSeries: item.FILE_SER, ...item }, fecha_ingreso),
     nombre_marca: texto(item.titulo),
     clase_niza: clase && +clase[1] >= 1 && +clase[1] <= 45 ? +clase[1] : null,
     estado_tramite: texto(item.estado),
     fecha_ingreso,
     tipo_signo: signo ? (SIGNOS[signo.toLowerCase()] ?? signo) : null,
-    titular: texto(item.titular),
-    pais_titular: null,
-    agente: texto(item.agent),
-    matricula_agente: null,
+    titular,
+    pais_titular: texto(item.pais) ?? pais_titular,
+    agente,
+    matricula_agente: enteroComoTexto(item.agentNbr),
     tipo_tramite: tramite ? (TRAMITES[tramite.toUpperCase()] ?? tramite) : null,
     referencia: null,
     nro_registro: enteroComoTexto(item.regNbr ?? item.noRegistro),
@@ -290,8 +314,8 @@ export function aMarca(item) {
 // ---------------------------------------------------------------------
 // Guardar
 // ---------------------------------------------------------------------
-// Joaju da el nombre del agente pero no su matrícula: se toma la que ya
-// figura para ese nombre en los boletines (hace falta para el acceso de agentes).
+// Joaju trae la matrícula en agentNbr. Si falta, se toma la que ya figura
+// para ese nombre en los boletines (hace falta para el acceso de agentes).
 const matriculas = new Map();
 async function matriculaDe(agente) {
   if (!agente) return null;
@@ -312,7 +336,8 @@ const SQL_COMPLETAR = `
      SET fecha_concesion   = COALESCE($2, fecha_concesion),
          fecha_vencimiento = COALESCE($3, fecha_vencimiento),
          nro_registro      = COALESCE($4, nro_registro),
-         estado_tramite    = COALESCE($5, estado_tramite)
+         estado_tramite    = COALESCE($5, estado_tramite),
+         joaju_consultado_el = now()
    WHERE nro_expediente = $1`;
 
 async function guardar(item, resumen, opciones) {
@@ -325,7 +350,7 @@ async function guardar(item, resumen, opciones) {
     return;
   }
   try {
-    marca.matricula_agente = await matriculaDe(marca.agente);
+    marca.matricula_agente ??= await matriculaDe(marca.agente);
     const r = await procesarFila(marca, { origen: ORIGEN, sinAlertas: opciones.sinAlertas });
     if (r.nueva) {
       resumen.nuevas++;
@@ -344,24 +369,47 @@ async function guardar(item, resumen, opciones) {
 }
 
 // ---------------------------------------------------------------------
-// Recorrer un rango de fechas: tramos de 7 días; si un tramo trae
-// demasiados resultados, se parte a la mitad hasta llegar a un día.
+// Recorrer tramos (de fechas o de números de expediente). Si un tramo trae
+// demasiados resultados (el servicio responde solo la cantidad), se parte a
+// la mitad hasta llegar a una fecha o a un número.
 // ---------------------------------------------------------------------
 const sumarDias = (f, n) => new Date(Date.parse(`${f}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const diasEntre = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
 
-export async function recorrer(tipo, desde, hasta, opciones = {}) {
-  const { maximo = envNumero('JOAJU_MAXIMO_CONSULTAS', 200), sinAlertas = false } = opciones;
-  const resumen = {
-    ok: true, tipo, desde, hasta, consultas: 0, recibidas: 0, nuevas: 0, yaEstaban: 0,
-    conVencimiento: 0, alertas: 0, sinExpediente: 0, conError: 0, diasSinListar: [],
-  };
-  const pendientes = [];
-  for (let d = desde; d <= hasta; d = sumarDias(d, 7)) {
-    const fin = sumarDias(d, 6);
-    pendientes.push([d, fin < hasta ? fin : hasta]);
-  }
+// Cómo se arma, se parte y se muestra cada tipo de tramo
+const TRAMOS = {
+  fechas: {
+    tamano: 7,
+    siguiente: (a, n) => sumarDias(a, n),
+    largo: (a, b) => diasEntre(a, b),
+  },
+  numeros: {
+    tamano: envNumero('JOAJU_TRAMO_EXPEDIENTES', 100),
+    siguiente: (a, n) => a + n,
+    largo: (a, b) => b - a,
+  },
+};
 
+function partirEnTramos(desde, hasta, t) {
+  const tramos = [];
+  for (let a = desde; a <= hasta; a = t.siguiente(a, t.tamano)) {
+    const fin = t.siguiente(a, t.tamano - 1);
+    tramos.push([a, fin < hasta ? fin : hasta]);
+  }
+  return tramos;
+}
+
+function nuevoResumen(tipo, desde, hasta) {
+  return {
+    ok: true, tipo, desde, hasta, consultas: 0, recibidas: 0, nuevas: 0, yaEstaban: 0,
+    conVencimiento: 0, alertas: 0, sinExpediente: 0, conError: 0, sinListar: [],
+  };
+}
+
+async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
+  const { maximo = envNumero('JOAJU_MAXIMO_CONSULTAS', 200), sinAlertas = false } = opciones;
+  const t = TRAMOS[unidad];
+  const pendientes = [...tramos];
   while (pendientes.length) {
     if (resumen.consultas >= maximo) {
       resumen.ok = false;
@@ -376,24 +424,69 @@ export async function recorrer(tipo, desde, hasta, opciones = {}) {
     } catch (err) {
       resumen.ok = false;
       resumen.error = `${a} a ${b}: ${err.message}`;
+      resumen.cortado = `El sitio no respondió; falta desde ${a}`;
       await registrarError('Joaju', err, { tipo, desde: a, hasta: b });
-      break; // el sitio no responde: se corta y se puede retomar desde esa fecha
+      break;
     }
     if (respuesta.demasiados !== undefined) {
-      const dias = diasEntre(a, b);
-      if (dias === 0) {
-        resumen.diasSinListar.push(`${a} (${respuesta.demasiados})`);
+      const largo = t.largo(a, b);
+      if (largo === 0) {
+        resumen.sinListar.push(`${a} (${respuesta.demasiados})`);
         continue;
       }
-      const mitad = sumarDias(a, Math.floor(dias / 2));
-      pendientes.unshift([a, mitad], [sumarDias(mitad, 1), b]);
+      const mitad = t.siguiente(a, Math.floor(largo / 2));
+      pendientes.unshift([a, mitad], [t.siguiente(mitad, 1), b]);
       continue;
     }
     resumen.recibidas += respuesta.registros.length;
     for (const item of respuesta.registros) await guardar(item, resumen, { sinAlertas });
     console.log(`[joaju] ${a} a ${b}: ${respuesta.registros.length} marcas`);
   }
-  if (resumen.diasSinListar.length) resumen.ok = false;
+  if (resumen.sinListar.length) resumen.ok = false;
+  return resumen;
+}
+
+/** Por fecha de solicitud ('solicitadas') o de vencimiento ('vencen'). */
+export async function recorrer(tipo, desde, hasta, opciones = {}) {
+  const resumen = nuevoResumen(tipo, desde, hasta);
+  await recorrerTramos(tipo, partirEnTramos(desde, hasta, TRAMOS.fechas), 'fechas', resumen, opciones);
+  console.log('[joaju] Resumen:', JSON.stringify(resumen));
+  return resumen;
+}
+
+/** Un rango de números de expediente (ej: 2681702 a 2692763). */
+export async function recorrerExpedientes(desde, hasta, opciones = {}) {
+  const resumen = nuevoResumen('expedientes', desde, hasta);
+  await recorrerTramos('expedientes', partirEnTramos(desde, hasta, TRAMOS.numeros), 'numeros', resumen, opciones);
+  console.log('[joaju] Resumen:', JSON.stringify(resumen));
+  return resumen;
+}
+
+/**
+ * Vuelve a consultar las marcas ya cargadas que no tienen vencimiento y no se
+ * consultaron en los últimos JOAJU_DIAS_ENTRE_CONSULTAS días (30). Agrupa
+ * expedientes cercanos en un mismo tramo para hacer pocas consultas.
+ */
+export async function completarVencimientos(opciones = {}) {
+  const { rows } = await query(
+    `SELECT nro_expediente::bigint AS n FROM marcas_dinapi
+      WHERE fecha_vencimiento IS NULL AND nro_expediente ~ '^[0-9]{7}$'
+        AND (joaju_consultado_el IS NULL OR joaju_consultado_el < now() - make_interval(days => $1))
+      ORDER BY 1`,
+    [envNumero('JOAJU_DIAS_ENTRE_CONSULTAS', 30)]
+  );
+  const tamano = TRAMOS.numeros.tamano;
+  const tramos = [];
+  for (const { n } of rows) {
+    const num = Number(n);
+    const ultimo = tramos.at(-1);
+    if (ultimo && num - ultimo[0] < tamano) ultimo[1] = num;
+    else tramos.push([num, num]);
+  }
+  const resumen = nuevoResumen('completar', rows[0]?.n ?? null, rows.at(-1)?.n ?? null);
+  resumen.pendientes = rows.length;
+  // Son marcas ya cargadas: no generan alertas nuevas
+  await recorrerTramos('expedientes', tramos, 'numeros', resumen, { ...opciones, sinAlertas: true });
   console.log('[joaju] Resumen:', JSON.stringify(resumen));
   return resumen;
 }
@@ -401,6 +494,10 @@ export async function recorrer(tipo, desde, hasta, opciones = {}) {
 // ---------------------------------------------------------------------
 // --probar: averigua cómo responde el servicio, sin guardar nada.
 // ---------------------------------------------------------------------
+// Una sola fecha no puede traer tantas marcas: si pasa, el filtro se ignoró
+// y el servicio está contando la base entera.
+const MAXIMO_CREIBLE_POR_DIA = 5000;
+
 async function probar(expediente) {
   const resumir = (r) =>
     r.demasiados !== undefined ? `demasiados para listar (${r.demasiados})` : `${r.registros.length} marcas`;
@@ -414,20 +511,18 @@ async function probar(expediente) {
       return null;
     }
   };
+  const sinLogo = ({ logo, ...resto }) => (logo ? { ...resto, logo: `(imagen, ${String(logo).length} caracteres)` } : resto);
 
   const { rows } = await query('SELECT fecha_ingreso FROM marcas_dinapi WHERE nro_expediente = $1', [expediente]);
   const dia = rows[0]?.fecha_ingreso ?? '2026-10-01';
 
   console.log(`\n1) Buscar el expediente ${expediente}`);
-  let encontrado = null;
-  for (const variante of ['completo', 'serie']) {
-    const r = await intentar(`número ${variante === 'completo' ? 'entero' : 'partido en año y número'}`, criterios.expediente(expediente, variante));
-    if (r?.registros?.length && !encontrado) encontrado = { variante, item: r.registros[0] };
-  }
-  if (encontrado) {
-    console.log('\nRespuesta tal cual vino (primera marca):');
-    console.log(JSON.stringify(encontrado.item, null, 2));
-    const marca = aMarca(encontrado.item);
+  const r1 = await intentar('número entero', criterios.expediente(expediente));
+  const item = r1?.registros?.[0];
+  if (item) {
+    console.log('\nRespuesta tal cual vino:');
+    console.log(JSON.stringify(sinLogo(item), null, 2));
+    const marca = aMarca(item);
     console.log('\nCómo se guardaría:');
     console.log(JSON.stringify(marca, null, 2));
     console.log(marca.nro_expediente === expediente
@@ -435,15 +530,30 @@ async function probar(expediente) {
       : `\nATENCIÓN: el expediente quedó "${marca.nro_expediente}" y no ${expediente}. No cargues nada todavía.`);
   }
 
-  console.log(`\n2) Buscar las solicitudes del ${dia} con cada formato de fecha`);
-  const funcionan = [];
-  for (const formato of Object.keys(FORMATOS_FECHA)) {
-    const r = await intentar(`formato ${formato} (${formatearFecha(dia, formato)})`, criterios.solicitadas(dia, dia, formato));
-    if (r && (r.registros.length || r.demasiados)) funcionan.push(formato);
+  const n = Number(expediente);
+  console.log(`\n2) Buscar un rango de 50 expedientes (${n} a ${n + 49})`);
+  const r2 = await intentar('rango de expedientes', criterios.expedientes(n, n + 49));
+  if (r2?.registros?.length) {
+    const exps = r2.registros.map((i) => aMarca(i).nro_expediente).filter(Boolean);
+    const fuera = exps.filter((e) => +e < n || +e > n + 49).length;
+    console.log(fuera
+      ? `ATENCIÓN: ${fuera} expedientes fuera del rango pedido. No uses --expedientes todavía.`
+      : `OK: los ${exps.length} expedientes están dentro del rango. Se puede usar --expedientes.`);
   }
-  console.log(funcionan.length
-    ? `\nPoné en el .env: JOAJU_FORMATO_FECHA=${funcionan[0]}`
-    : '\nNingún formato de fecha trajo marcas: pasale esta salida a Claude.');
+
+  console.log(`\n3) Buscar por fecha (${dia}) con cada formato`);
+  const sirven = [];
+  for (const formato of Object.keys(FORMATOS_FECHA)) {
+    for (const tipo of ['solicitadas', 'vencen']) {
+      const r = await intentar(`${tipo === 'vencen' ? 'vencimiento' : 'solicitud'}, formato ${formato}`, criterios[tipo](dia, dia, formato));
+      if (!r) continue;
+      if (r.demasiados > MAXIMO_CREIBLE_POR_DIA) console.log('  (no filtra: cuenta la base entera)');
+      else if (r.registros.length || r.demasiados) sirven.push(`${tipo} con ${formato}`);
+    }
+  }
+  console.log(sirven.length
+    ? `\nLa búsqueda por fecha funciona: ${sirven.join(', ')}. Pasale esta salida a Claude.`
+    : '\nLa búsqueda por fecha no funciona: usá --expedientes y --completar.');
 }
 
 // ---------------------------------------------------------------------
@@ -451,11 +561,26 @@ async function probar(expediente) {
 // ---------------------------------------------------------------------
 const USO = `Uso (empezar siempre por --probar):
   node --env-file=.env src/joaju.js --probar [expediente]
+  node --env-file=.env src/joaju.js --expedientes 2681702 2692763 [--sin-avisos]
+  node --env-file=.env src/joaju.js --completar
   node --env-file=.env src/joaju.js --solicitudes AAAA-MM-DD AAAA-MM-DD [--sin-avisos]
   node --env-file=.env src/joaju.js --vencen AAAA-MM-DD AAAA-MM-DD
   --maximo N   corta después de N consultas`;
 
 const ES_FECHA = /^\d{4}-\d{2}-\d{2}$/;
+const ES_EXPEDIENTE = /^\d{7}$/;
+
+// Antes de recorrer por fecha, se prueba con un día en el que ya sabemos que
+// hay marcas: tiene que traer algunas, pero no la base entera.
+async function fechaFiltra(tipo) {
+  const columna = tipo === 'vencen' ? 'fecha_vencimiento' : 'fecha_ingreso';
+  const { rows } = await query(
+    `SELECT ${columna} AS dia FROM marcas_dinapi WHERE ${columna} IS NOT NULL ORDER BY ${columna} DESC LIMIT 1`
+  );
+  if (!rows.length) return false;
+  const r = await consultar(criterios[tipo](rows[0].dia, rows[0].dia));
+  return r.demasiados !== undefined ? r.demasiados <= MAXIMO_CREIBLE_POR_DIA : r.registros.length > 0;
+}
 
 async function main() {
   const args = process.argv.slice(2);
@@ -463,24 +588,44 @@ async function main() {
   const valores = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--maximo');
   const iMax = args.indexOf('--maximo');
   const maximo = iMax >= 0 ? Number(args[iMax + 1]) : undefined;
+  const [desde, hasta] = valores;
 
   if (banderas.has('--probar')) {
     await probar(valores[0] ?? '2692764');
     return;
   }
-  const tipo = banderas.has('--solicitudes') ? 'solicitadas' : banderas.has('--vencen') ? 'vencen' : null;
-  const [desde, hasta] = valores;
-  if (!tipo || !ES_FECHA.test(desde ?? '') || !ES_FECHA.test(hasta ?? '') || desde > hasta) {
-    console.log(USO);
-    process.exitCode = 2;
-    return;
+
+  let resumen;
+  let sinAlertas = false;
+  if (banderas.has('--expedientes')) {
+    if (!ES_EXPEDIENTE.test(desde ?? '') || !ES_EXPEDIENTE.test(hasta ?? '') || +desde > +hasta) return uso();
+    resumen = await recorrerExpedientes(+desde, +hasta, { maximo });
+  } else if (banderas.has('--completar')) {
+    sinAlertas = true;
+    resumen = await completarVencimientos({ maximo });
+  } else if (banderas.has('--solicitudes') || banderas.has('--vencen')) {
+    const tipo = banderas.has('--solicitudes') ? 'solicitadas' : 'vencen';
+    if (!ES_FECHA.test(desde ?? '') || !ES_FECHA.test(hasta ?? '') || desde > hasta) return uso();
+    if (!(await fechaFiltra(tipo))) {
+      console.log('La búsqueda por fecha no funciona en Joaju con JOAJU_FORMATO_FECHA. Usá --expedientes o --completar.');
+      process.exitCode = 1;
+      return;
+    }
+    // Las marcas que vencen son viejas: se guardan como antecedentes, sin alertas.
+    sinAlertas = tipo === 'vencen';
+    resumen = await recorrer(tipo, desde, hasta, { maximo, sinAlertas });
+  } else {
+    return uso();
   }
-  // Las marcas que vencen son viejas: se guardan como antecedentes, sin alertas.
-  const sinAlertas = tipo === 'vencen';
-  const resumen = await recorrer(tipo, desde, hasta, { maximo, sinAlertas });
+
   let avisos = { ok: true };
   if (!sinAlertas && !banderas.has('--sin-avisos')) avisos = await enviarAvisosPendientes();
   process.exitCode = resumen.ok && avisos.ok ? 0 : 1;
+}
+
+function uso() {
+  console.log(USO);
+  process.exitCode = 2;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
