@@ -245,6 +245,16 @@ npm run joaju -- --expedientes 2681702 2692763     # setiembre: entre el boletí
 npm run joaju -- --completar                       # repetir hasta que no diga "falta desde"
 ```
 
+Para dejarlo corriendo solo hasta el final (unas horas, sigue aunque se cierre la sesión SSH):
+
+```bash
+nohup npm run joaju -- --completar --hasta-terminar > ~/joaju-completar.log 2>&1 &
+tail -f ~/joaju-completar.log                      # Ctrl+C deja de mirar, no lo corta
+```
+
+- `--hasta-terminar` no tiene tope de consultas, muestra el avance cada 50 consultas y, si el sitio no responde, espera `JOAJU_ESPERA_ERROR_MS` (5 min) y reintenta hasta `JOAJU_REINTENTOS_ERROR` veces (12). Si igual se corta, volver a lanzar el mismo comando: sigue donde quedó.
+- Las marcas que Joaju no devuelve quedan igual como consultadas, para no pedirlas en cada vuelta.
+
 - `--probar` busca un expediente que ya está cargado y muestra cómo lo guardaría (sin el logo). Si dice **ATENCIÓN**, no cargar nada.
 - Consulta de a una, con `JOAJU_PAUSA_MS` (3 s) entre consultas, en tramos de `JOAJU_TRAMO_EXPEDIENTES` (100) expedientes. Si un tramo trae demasiadas marcas (el servicio responde solo la cantidad), lo parte a la mitad.
 - Corta a las `JOAJU_MAXIMO_CONSULTAS` (200) o si el sitio no responde, y dice desde dónde seguir. Repetir un rango es seguro: lo que ya estaba se saltea.
