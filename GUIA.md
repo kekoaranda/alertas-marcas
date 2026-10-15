@@ -224,26 +224,31 @@ como `.xlsx`. Cada carga queda anotada en `boletines_procesados` como
 
 [Joaju](https://joaju.dinapi.gov.py/marcas) es el buscador público de marcas
 de la DINAPI. Por detrás consulta un servicio que no pide usuario y que, por
-cada marca, trae solicitud, concesión, vencimiento, número de registro y
-estado. `src/joaju.js` lo usa para:
+cada marca, trae solicitud, concesión, vencimiento, número de registro,
+estado, titular con su país y agente con su matrícula. `src/joaju.js` lo usa para:
 
-- **Traer solicitudes que todavía no salieron en boletín** (`--solicitudes`): pasan por el mismo motor que los boletines (alertas, avisos y marcas de agentes).
-- **Completar el vencimiento real** (`--vencen`): guarda concesión, vencimiento y registro. Las marcas que no estaban se guardan como antecedentes, sin alertas, y aparecen en "vencen en el año" de cada agente con la fecha real en vez de la estimada.
+- **Traer expedientes que todavía no salieron en boletín** (`--expedientes desde hasta`): las marcas nuevas pasan por el mismo motor que los boletines (alertas, avisos y marcas de agentes). A las que ya estaban se les completan concesión, vencimiento y registro.
+- **Completar el vencimiento real de lo ya cargado** (`--completar`): vuelve a consultar las marcas sin vencimiento, agrupando expedientes cercanos para hacer pocas consultas. Una marca consultada no se repite por `JOAJU_DIAS_ENTRE_CONSULTAS` días (30).
+
+Probado contra el servicio real el 15/10/2026: la búsqueda por número de
+expediente funciona y coincide con el boletín. La búsqueda por fecha no
+filtra (con `dd/mm/aaaa` cuenta la base entera, con los otros formatos no
+trae nada), así que `--solicitudes` y `--vencen` se niegan a correr hasta que
+`--probar` encuentre un formato que funcione.
 
 Hay que correrlo en el servidor (desde donde ya se bajan los boletines). Siempre empezar por `--probar`, que no guarda nada:
 
 ```bash
-npm run db:schema                         # agrega la columna nro_registro
-npm run joaju -- --probar 2692764         # ¿coincide el expediente? ¿qué formato de fecha acepta?
-npm run joaju -- --solicitudes 2026-09-01 2026-09-30
-npm run joaju -- --vencen 2026-10-01 2027-12-31
+npm run db:schema                                  # columnas nro_registro y joaju_consultado_el
+npm run joaju -- --probar 2692764
+npm run joaju -- --expedientes 2681702 2692763     # setiembre: entre el boletín de agosto y el Excel de octubre
+npm run joaju -- --completar                       # repetir hasta que no diga "falta desde"
 ```
 
-- `--probar` busca un expediente que ya está cargado y muestra cómo lo guardaría. Si dice **ATENCIÓN**, no cargar nada: el número no coincide con el del boletín y se duplicarían marcas. También prueba los formatos de fecha y dice qué poner en `JOAJU_FORMATO_FECHA`.
-- Consulta de a una, con `JOAJU_PAUSA_MS` (3 s) entre consultas, en tramos de 7 días. Si un tramo trae demasiadas marcas (el servicio responde solo la cantidad), lo parte a la mitad hasta llegar a un día.
-- Corta a las `JOAJU_MAXIMO_CONSULTAS` (200) o si el sitio no responde, y dice desde qué fecha retomar. Repetir un rango es seguro: lo que ya estaba se saltea (y se le completan los datos nuevos).
+- `--probar` busca un expediente que ya está cargado y muestra cómo lo guardaría (sin el logo). Si dice **ATENCIÓN**, no cargar nada.
+- Consulta de a una, con `JOAJU_PAUSA_MS` (3 s) entre consultas, en tramos de `JOAJU_TRAMO_EXPEDIENTES` (100) expedientes. Si un tramo trae demasiadas marcas (el servicio responde solo la cantidad), lo parte a la mitad.
+- Corta a las `JOAJU_MAXIMO_CONSULTAS` (200) o si el sitio no responde, y dice desde dónde seguir. Repetir un rango es seguro: lo que ya estaba se saltea.
 - Una marca cuyo expediente no queda con el formato del boletín (7 dígitos, los dos primeros = año de la solicitud) no se guarda; se cuenta en `sinExpediente`.
-- Joaju trae el nombre del agente pero no su matrícula: se toma la que ya figura para ese nombre en los boletines.
 - Si falla con un error de certificado, la DINAPI no envía la cadena completa: bajar el certificado intermedio y usar `NODE_EXTRA_CA_CERTS=/ruta/intermedio.pem` (nunca desactivar la verificación).
 
 ### Limpieza de "Documentos Recibidos" cargados por error
