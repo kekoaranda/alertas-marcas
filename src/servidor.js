@@ -18,7 +18,9 @@ import { env, envNumero } from './config.js';
 import { buscarMarcasSimilares } from './moduloAlertas.js';
 import { procesarBoletin } from './procesadorBoletin.js';
 import { enviarAvisosPendientes } from './notificador.js';
-import { datosDeMatricula, normalizarMatricula, vencimientosDelAgente, vigilarMarcasDelAgente } from './agentes.js';
+import {
+  datosDeMatricula, estadosDelAgente, normalizarMatricula, vencimientosDelAgente, vigilarMarcasDelAgente,
+} from './agentes.js';
 import { registrarError } from './registro.js';
 
 const CARPETA_PUBLICA = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -385,6 +387,11 @@ export function crearApp() {
     const anio = req.query.anio === undefined ? new Date().getFullYear() : Number(req.query.anio);
     if (!Number.isInteger(anio) || anio < 1900 || anio > 2200) throw error(400, 'Año inválido');
     res.json({ anio, marcas: await vencimientosDelAgente(req.usuario.matricula, anio) });
+  });
+
+  app.get('/api/estados', requiereSesion, async (req, res) => {
+    if (!req.usuario.matricula_verificada) throw error(403, 'Solo para agentes con matrícula verificada');
+    res.json(await estadosDelAgente(req.usuario.matricula));
   });
 
   // --- Alertas -------------------------------------------------------------
