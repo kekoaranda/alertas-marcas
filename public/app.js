@@ -138,6 +138,7 @@ function mostrarAgente(yo) {
   $('#caja-matricula').hidden = yo.matricula_verificada;
   esAgente = yo.matricula_verificada;
   $('#vencimientos').hidden = !esAgente;
+  $('#estados').hidden = !esAgente;
   $('#venc-agente').textContent = esAgente ? `${yo.agente ?? yo.nombre} · Matrícula ${yo.matricula}` : '';
   $('#caja-matricula summary').textContent = yo.matricula ? 'Corregir mi matrícula' : 'Soy agente de marcas';
 }
@@ -361,6 +362,25 @@ async function cargarVencimientos() {
 }
 
 $('#venc-anio').addEventListener('change', cargarVencimientos);
+
+// Resumen de la cartera del agente: cuántas de sus marcas hay en cada estado
+async function cargarEstadosAgente() {
+  if (!esAgente) return;
+  try {
+    const estados = await api('GET', '/api/estados');
+    $('#error-estados').textContent = '';
+    const total = estados.reduce((n, e) => n + e.total, 0);
+    const lista = el('dl', null, 'totales');
+    for (const e of estados) {
+      const caja = el('div');
+      caja.append(el('dt', e.estado ?? 'Sin estado todavía'), el('dd', Number(e.total).toLocaleString('es-PY')));
+      lista.append(caja);
+    }
+    $('#estados-lista').replaceChildren(el('p', `${total.toLocaleString('es-PY')} marcas en total`, 'sutil'), lista);
+  } catch (err) {
+    $('#error-estados').textContent = err.message;
+  }
+}
 $('#venc-imprimir').addEventListener('click', () => {
   // Al imprimir solo sale esta tarjeta (ver @media print en estilos.css)
   document.body.classList.add('imprimir-vencimientos');
@@ -553,13 +573,13 @@ for (let clase = 1; clase <= 45; clase++) {
 
 async function refrescar() {
   await cargarCuenta();
-  await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin(), cargarVencimientos()]);
+  await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin(), cargarVencimientos(), cargarEstadosAgente()]);
 }
 
 async function iniciar() {
   try {
     await cargarCuenta(); // si no hay sesión, falla acá con 401
-    await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin(), cargarVencimientos()]);
+    await Promise.all([cargarTerminos(), cargarAlertas(), cargarAdmin(), cargarVencimientos(), cargarEstadosAgente()]);
     $('#vista-acceso').hidden = true;
     $('#vista-panel').hidden = false;
     $('#usuario').hidden = false;

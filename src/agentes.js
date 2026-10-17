@@ -109,3 +109,16 @@ export async function vencimientosDelAgente(matricula, anio, { client = pool } =
   const { rows } = await client.query(SQL_VENCIMIENTOS, [matricula, anio]);
   return rows;
 }
+
+/** Cuántas marcas del agente hay en cada estado de trámite (el estado lo trae Joaju). */
+export async function estadosDelAgente(matricula, { client = pool } = {}) {
+  const { rows } = await client.query(
+    `SELECT estado_tramite AS estado, count(*)::int AS total
+     FROM marcas_dinapi
+     WHERE normalizar_matricula(matricula_agente) = $1
+     GROUP BY 1
+     ORDER BY total DESC`,
+    [matricula]
+  );
+  return rows;
+}
