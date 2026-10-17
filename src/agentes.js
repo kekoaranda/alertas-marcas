@@ -99,7 +99,7 @@ const SQL_VENCIMIENTOS = `
     FROM ultimas u
   )
   SELECT nro_expediente, nombre_marca, clase_niza, tipo_signo, titular, tipo_tramite,
-         fecha_ingreso, vence, estimado
+         estado_tramite, fecha_ingreso, vence, estimado
   FROM con_vencimiento
   WHERE extract(year FROM vence) = $2
   ORDER BY vence, nombre_marca NULLS LAST`;
