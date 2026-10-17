@@ -21,6 +21,9 @@
 //       JOAJU_ESPERA_ERROR_MS (5 min, después 10, 15... hasta 30) y reintenta
 //       hasta JOAJU_REINTENTOS_ERROR veces (24, unas 10 horas). Si se corta, volver a correr lo mismo: --completar sigue
 //       donde quedó porque saltea lo ya consultado.
+//   Si Joaju falla siempre con un expediente puntual ("Multiple rows were
+//   found..."), se parte el tramo hasta aislarlo, se saltea y queda en
+//   conErrorJoaju del resumen; el resto sigue normal.
 //
 // Probado contra el servicio real (15/10/2026): la búsqueda por número de
 // expediente funciona; la búsqueda por fecha no filtra con ningún formato
@@ -191,6 +194,18 @@ export async function consultar(arg0, { intentos = 3 } = {}) {
   }
 }
 
+// Joaju a veces falla con un error de su propia base para ciertos expedientes
+// (p. ej. uno con registros duplicados del lado de la DINAPI). Ese tramo falla
+// siempre igual, así que no es una caída del sitio: no sirve reintentar.
+const ERROR_DE_DATOS = /Multiple rows were found|more than one row|query did not return a unique result/i;
+
+function errorDeDatos(texto) {
+  const err = new Error(`Joaju no puede devolver este tramo: ${texto.slice(0, 200)}`);
+  err.reintentable = false;
+  err.deDatos = true;
+  return err;
+}
+
 export function interpretarRespuesta(texto) {
   let datos;
   try {
@@ -202,9 +217,13 @@ export function interpretarRespuesta(texto) {
   if (typeof datos === 'string') {
     if (/^\s*\d+\s*$/.test(datos)) return { demasiados: Number(datos), registros: [] };
     if (datos.includes('<return>')) return { registros: leerXml(datos) };
+    if (ERROR_DE_DATOS.test(datos)) throw errorDeDatos(datos);
     throw new Error(`Respuesta de Joaju que no se entiende: ${datos.slice(0, 200)}`);
   }
-  if (!Array.isArray(datos)) throw new Error(`Respuesta de Joaju que no se entiende: ${texto.slice(0, 200)}`);
+  if (!Array.isArray(datos)) {
+    if (ERROR_DE_DATOS.test(texto)) throw errorDeDatos(texto);
+    throw new Error(`Respuesta de Joaju que no se entiende: ${texto.slice(0, 200)}`);
+  }
   // El primer elemento suele ser un resumen { total, criterios }
   return { registros: datos.filter((d) => d && typeof d === 'object' && !('criterios' in d && !('titulo' in d))) };
 }
@@ -407,7 +426,7 @@ function partirEnTramos(desde, hasta, t) {
 function nuevoResumen(tipo, desde, hasta) {
   return {
     ok: true, tipo, desde, hasta, consultas: 0, recibidas: 0, nuevas: 0, yaEstaban: 0,
-    conVencimiento: 0, alertas: 0, sinExpediente: 0, conError: 0, sinListar: [],
+    conVencimiento: 0, alertas: 0, sinExpediente: 0, conError: 0, sinListar: [], conErrorJoaju: [],
   };
 }
 
@@ -441,6 +460,22 @@ async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
     try {
       respuesta = await consultar(criterios[tipo](a, b));
     } catch (err) {
+      if (err.deDatos) {
+        // Se parte el tramo en mitades hasta aislar el expediente (o la fecha)
+        // que hace fallar a Joaju; ese se anota y se saltea.
+        fallosSeguidos = 0;
+        const largo = t.largo(a, b);
+        if (largo > 0) {
+          const mitad = t.siguiente(a, Math.floor(largo / 2));
+          pendientes.unshift([a, mitad], [t.siguiente(mitad, 1), b]);
+          continue;
+        }
+        resumen.conErrorJoaju.push(String(a));
+        console.log(`[joaju] ${hora()} ${a}: Joaju da error con este y se saltea (${err.message.slice(0, 120)})`);
+        await registrarError('Joaju', err, { tipo, desde: a, hasta: b });
+        if (tipo === 'expedientes') await query(SQL_TRAMO_CONSULTADO, [a, b]);
+        continue;
+      }
       if (fallosSeguidos < reintentosError) {
         fallosSeguidos++;
         // Espera cada vez más (5, 10, 15... hasta 30 min): con 24 reintentos
