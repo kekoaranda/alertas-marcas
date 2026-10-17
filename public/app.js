@@ -255,7 +255,7 @@ async function cargarAlertas() {
       celda('Tu marca', a.tu_marca),
       celda('Solicitud', a.nombre_marca ?? '(solo logo)', titular),
       celda('Clase', a.clase_niza ?? '-'),
-      celda('Expediente', a.nro_expediente, fecha(a.fecha_ingreso)),
+      celda('Expediente', a.nro_expediente, [fecha(a.fecha_ingreso), a.estado_tramite].filter(Boolean).join(' · ')),
       celda('Coincidencia', TIPOS[a.tipo_coincidencia] ?? a.tipo_coincidencia),
       accion
     );
@@ -340,7 +340,7 @@ async function cargarVencimientos() {
     const tabla = el('table', null, 'tabla');
     tabla.append(el('thead'), el('tbody'));
     const encabezado = el('tr');
-    for (const titulo of ['Vence', 'Marca', 'Clase', 'Expediente', 'Titular']) encabezado.append(el('th', titulo));
+    for (const titulo of ['Vence', 'Marca', 'Clase', 'Expediente', 'Estado', 'Titular']) encabezado.append(el('th', titulo));
     tabla.tHead.append(encabezado);
     for (const m of marcas) {
       const fila = el('tr');
@@ -349,6 +349,7 @@ async function cargarVencimientos() {
         celda('Marca', m.nombre_marca ?? '(solo logo)', m.tipo_tramite),
         celda('Clase', m.clase_niza ?? '-'),
         celda('Expediente', m.nro_expediente, m.fecha_ingreso && `Solicitud ${fecha(m.fecha_ingreso)}`),
+        celda('Estado', m.estado_tramite ?? '-'),
         celda('Titular', m.titular ?? '-')
       );
       tabla.tBodies[0].append(fila);
@@ -459,6 +460,39 @@ async function cargarAdmin() {
   }
   contenedor.replaceChildren(tabla);
 }
+
+// Conteo por estado de trámite: se calcula recién al abrir la caja (recorre toda la tabla)
+async function cargarEstados() {
+  const contenedor = $('#admin-estados');
+  contenedor.replaceChildren(el('p', 'Contando...', 'sutil'));
+  try {
+    const estados = await api('GET', '/api/admin/estados');
+    const tabla = el('table', null, 'tabla');
+    tabla.append(el('thead'), el('tbody'));
+    const encabezado = el('tr');
+    for (const titulo of ['Estado', 'Marcas', 'Con vencimiento', 'Sin vencimiento']) encabezado.append(el('th', titulo));
+    tabla.tHead.append(encabezado);
+    const total = estados.reduce((n, e) => n + e.total, 0);
+    for (const e of estados) {
+      const fila = el('tr');
+      fila.append(
+        celda('Estado', e.estado),
+        celda('Marcas', numero(e.total), `${((e.total / total) * 100).toFixed(1)}%`),
+        celda('Con vencimiento', numero(e.con_vencimiento)),
+        celda('Sin vencimiento', numero(e.sin_vencimiento))
+      );
+      if (e.sin_estado) fila.querySelector('[data-titulo=Estado] span').className = 'sutil';
+      tabla.tBodies[0].append(fila);
+    }
+    contenedor.replaceChildren(el('p', `${numero(total)} marcas en ${estados.length} estados`, 'sutil'), tabla);
+  } catch (err) {
+    contenedor.replaceChildren(el('p', err.message, 'error'));
+  }
+}
+
+$('#caja-estados').addEventListener('toggle', (e) => {
+  if (e.target.open) cargarEstados();
+});
 
 function botonAdmin(texto, accion, { confirmar, peligro } = {}) {
   const boton = el('button', texto, peligro ? 'enlace peligro' : 'enlace');

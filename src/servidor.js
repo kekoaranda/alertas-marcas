@@ -395,7 +395,7 @@ export function crearApp() {
               a.revisada, a.creado_el,
               t.texto_buscar AS tu_marca,
               m.nro_expediente, m.nombre_marca, m.clase_niza, m.fecha_ingreso,
-              m.titular, m.pais_titular, m.agente, m.tipo_signo
+              m.titular, m.pais_titular, m.agente, m.tipo_signo, m.estado_tramite
        FROM alertas a
        JOIN terminos_monitoreados t ON t.id = a.termino_id
        JOIN marcas_dinapi m         ON m.id = a.marca_dinapi_id
@@ -434,6 +434,26 @@ export function crearApp() {
         (SELECT count(*) FROM marcas_dinapi)::int                              AS marcas_dinapi,
         (SELECT max(cargado_el) FROM marcas_dinapi)                            AS ultima_carga`);
     res.json(rows[0]);
+  });
+
+  // Marcas de la DINAPI por estado de trámite. El estado lo trae solo Joaju
+  // (el boletín y el Excel del agente no tienen esa columna), así que las que
+  // no tienen estado se separan en "falta consultar" y "Joaju no la devolvió".
+  app.get('/api/admin/estados', requiereAdmin, async (_req, res) => {
+    const { rows } = await query(`
+      SELECT CASE
+               WHEN estado_tramite IS NOT NULL THEN estado_tramite
+               WHEN joaju_consultado_el IS NULL THEN '(sin estado: falta consultar en Joaju)'
+               ELSE '(sin estado: Joaju no la devolvió)'
+             END AS estado,
+             estado_tramite IS NULL AS sin_estado,
+             count(*)::int AS total,
+             count(*) FILTER (WHERE fecha_vencimiento IS NOT NULL)::int AS con_vencimiento,
+             count(*) FILTER (WHERE fecha_vencimiento IS NULL)::int AS sin_vencimiento
+      FROM marcas_dinapi
+      GROUP BY 1, 2
+      ORDER BY total DESC`);
+    res.json(rows);
   });
 
   app.get('/api/admin/usuarios', requiereAdmin, async (req, res) => {
