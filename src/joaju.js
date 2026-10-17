@@ -39,6 +39,9 @@ import { procesarFila } from './procesadorBoletin.js';
 import { registrarError } from './registro.js';
 import { enviarAvisosPendientes } from './notificador.js';
 
+// 7 dígitos, u 8 desde que un año pasó las 99.999 solicitudes (ver expedienteDe)
+const ES_EXPEDIENTE = /^\d{7,8}$/;
+
 const URL_JOAJU = () => env('JOAJU_URL', 'https://joaju.dinapi.gov.py/api/api/markMarkGetList-json/');
 const ORIGEN = 'joaju';
 
@@ -280,9 +283,10 @@ const enteroComoTexto = (v) => {
 };
 
 /**
- * Número de expediente con el formato del boletín: 7 dígitos, los 2 primeros
- * son el año (2692764 = 2026, nº 92764). Si Joaju lo da partido (serie 2026,
- * número 92764) se arma. Devuelve null si no queda con ese formato: mejor
+ * Número de expediente con el formato del boletín: los 2 primeros dígitos son
+ * el año y el resto el número (2692764 = 2026, nº 92764). Son 7 dígitos, u 8
+ * cuando el año pasó las 99.999 solicitudes (25113013 = 2025, nº 113013). Si
+ * Joaju lo da partido (serie 2026, número 92764) se arma. Devuelve null si no queda con ese formato: mejor
  * saltear la marca que guardarla con otro número y que después se duplique.
  */
 export function expedienteDe(item, fechaSolicitud) {
@@ -294,7 +298,7 @@ export function expedienteDe(item, fechaSolicitud) {
     if (!serie) return null;
     exp = serie.slice(-2) + nro.padStart(5, '0');
   }
-  if (!/^\d{7}$/.test(exp)) return null;
+  if (!ES_EXPEDIENTE.test(exp)) return null;
   if (fechaSolicitud && exp.slice(0, 2) !== fechaSolicitud.slice(2, 4)) return null;
   return exp;
 }
@@ -435,7 +439,7 @@ function nuevoResumen(tipo, desde, hasta) {
 // --completar no las vuelve a pedir en cada vuelta.
 const SQL_TRAMO_CONSULTADO = `
   UPDATE marcas_dinapi SET joaju_consultado_el = now()
-   WHERE nro_expediente ~ '^[0-9]{7}$' AND nro_expediente::bigint BETWEEN $1 AND $2`;
+   WHERE nro_expediente ~ '^[0-9]{7,8}$' AND nro_expediente::bigint BETWEEN $1 AND $2`;
 
 async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
   const { hastaTerminar = false, sinAlertas = false } = opciones;
@@ -541,7 +545,7 @@ export async function recorrerExpedientes(desde, hasta, opciones = {}) {
 export async function completarVencimientos(opciones = {}) {
   const { rows } = await query(
     `SELECT nro_expediente::bigint AS n FROM marcas_dinapi
-      WHERE fecha_vencimiento IS NULL AND nro_expediente ~ '^[0-9]{7}$'
+      WHERE fecha_vencimiento IS NULL AND nro_expediente ~ '^[0-9]{7,8}$'
         AND (joaju_consultado_el IS NULL OR joaju_consultado_el < now() - make_interval(days => $1))
       ORDER BY 1`,
     [envNumero('JOAJU_DIAS_ENTRE_CONSULTAS', 30)]
@@ -640,7 +644,6 @@ const USO = `Uso (empezar siempre por --probar):
   --hasta-terminar  sigue sin tope hasta el final (para dejarlo corriendo con nohup)`;
 
 const ES_FECHA = /^\d{4}-\d{2}-\d{2}$/;
-const ES_EXPEDIENTE = /^\d{7}$/;
 
 // Antes de recorrer por fecha, se prueba con un día en el que ya sabemos que
 // hay marcas: tiene que traer algunas, pero no la base entera.
