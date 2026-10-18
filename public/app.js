@@ -146,8 +146,17 @@ function mostrarAgente(yo) {
 async function cargarTerminos() {
   const terminos = await api('GET', '/api/terminos');
   const lista = $('#lista-terminos');
+  const listaAgente = $('#lista-agente');
   lista.replaceChildren();
+  listaAgente.replaceChildren();
   $('#sin-terminos').hidden = terminos.length > 0;
+  // Las marcas propias del agente pueden ser cientos: van plegadas en "Ver mis marcas controladas"
+  const deAgente = terminos.filter((t) => t.expediente_agente);
+  const conAlertas = deAgente.filter((t) => t.alertas_pendientes > 0).length;
+  $('#caja-agente').hidden = deAgente.length === 0;
+  $('#resumen-agente').textContent =
+    `Ver mis marcas controladas como agente (${deAgente.length})` +
+    (conAlertas > 0 ? ` · ${conAlertas} con alertas` : '');
   for (const t of terminos) {
     const item = $('#tpl-termino').content.firstElementChild.cloneNode(true);
     item.querySelector('.t-texto').textContent = t.texto;
@@ -168,8 +177,20 @@ async function cargarTerminos() {
       await refrescar();
     });
     item.querySelector('.t-similares').addEventListener('click', () => verSimilares(t, item));
-    lista.append(item);
+    item.dataset.busqueda = `${t.texto} ${t.expediente_agente ?? ''}`.toLowerCase();
+    (t.expediente_agente ? listaAgente : lista).append(item);
   }
+  filtrarMarcasAgente();
+}
+
+function filtrarMarcasAgente() {
+  const buscar = $('#buscar-agente').value.trim().toLowerCase();
+  let visibles = 0;
+  for (const item of $('#lista-agente').children) {
+    item.hidden = buscar !== '' && !item.dataset.busqueda.includes(buscar);
+    if (!item.hidden) visibles++;
+  }
+  $('#sin-coincidencias').hidden = visibles > 0 || $('#lista-agente').children.length === 0;
 }
 
 async function verSimilares(termino, item) {
@@ -560,6 +581,8 @@ $('#form-planilla').addEventListener('submit', (e) => {
     }
   });
 });
+
+$('#buscar-agente').addEventListener('input', filtrarMarcasAgente);
 
 $('#admin-buscar').addEventListener('input', () => {
   clearTimeout(esperaBusqueda);
