@@ -21,6 +21,9 @@
 //       JOAJU_ESPERA_ERROR_MS (5 min, después 10, 15... hasta 30) y reintenta
 //       hasta JOAJU_REINTENTOS_ERROR veces (24, unas 10 horas). Si se corta, volver a correr lo mismo: --completar sigue
 //       donde quedó porque saltea lo ya consultado.
+//   Si un solo día trae más marcas de las que Joaju lista, ese día se pide
+//   junto con rangos de expedientes, partidos a la mitad hasta que listen.
+//   --probar-dia AAAA-MM-DD comprueba que eso funcione, sin guardar nada.
 //   Si Joaju falla siempre con un expediente puntual ("Multiple rows were
 //   found..."), se parte el tramo hasta aislarlo, se saltea y queda en
 //   conErrorJoaju del resumen; el resto sigue normal.
@@ -141,6 +144,13 @@ export const criterios = {
   },
   expedientes(desde, hasta) {
     const c = criteriosVacios();
+    c.criteriaFileId.fileNbrFrom.doubleValue = String(desde);
+    c.criteriaFileId.fileNbrTo.doubleValue = String(hasta);
+    return c;
+  },
+  // Una fecha con demasiadas marcas se pide de a pedazos: fecha + rango de expedientes.
+  diaYExpedientes(tipo, dia, desde, hasta, formato) {
+    const c = criterios[tipo](dia, dia, formato);
     c.criteriaFileId.fileNbrFrom.doubleValue = String(desde);
     c.criteriaFileId.fileNbrTo.doubleValue = String(hasta);
     return c;
@@ -500,7 +510,8 @@ async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
     if (respuesta.demasiados !== undefined) {
       const largo = t.largo(a, b);
       if (largo === 0) {
-        resumen.sinListar.push(`${a} (${respuesta.demasiados})`);
+        if (tipo === 'expedientes') resumen.sinListar.push(`${a} (${respuesta.demasiados})`);
+        else await recorrerDiaPorExpedientes(tipo, a, respuesta.demasiados, resumen, { sinAlertas });
         continue;
       }
       const mitad = t.siguiente(a, Math.floor(largo / 2));
@@ -519,6 +530,61 @@ async function recorrerTramos(tipo, tramos, unidad, resumen, opciones) {
   }
   if (resumen.sinListar.length) resumen.ok = false;
   return resumen;
+}
+
+// Todos los expedientes posibles (7 u 8 dígitos)
+const EXPEDIENTE_MIN = 0;
+const EXPEDIENTE_MAX = 99_999_999;
+
+/**
+ * Un solo día con más marcas de las que Joaju lista (p. ej. 776 que vencen el
+ * 2027-03-09): se pide ese día junto con un rango de expedientes, y el rango
+ * se parte a la mitad hasta que cada pedazo se pueda listar.
+ */
+async function recorrerDiaPorExpedientes(tipo, dia, total, resumen, { sinAlertas }) {
+  const pendientes = [[EXPEDIENTE_MIN, EXPEDIENTE_MAX]];
+  let recibidas = 0;
+  while (pendientes.length) {
+    const [a, b] = pendientes.shift();
+    resumen.consultas++;
+    let respuesta;
+    try {
+      respuesta = await consultar(criterios.diaYExpedientes(tipo, dia, a, b));
+    } catch (err) {
+      if (err.deDatos && a < b) {
+        const mitad = a + Math.floor((b - a) / 2);
+        pendientes.unshift([a, mitad], [mitad + 1, b]);
+        continue;
+      }
+      if (err.deDatos) {
+        resumen.conErrorJoaju.push(`${dia} expediente ${a}`);
+        await registrarError('Joaju', err, { tipo, dia, expediente: a });
+        continue;
+      }
+      resumen.sinListar.push(`${dia} (${total}; error desde el expediente ${a}: ${err.message.slice(0, 80)})`);
+      await registrarError('Joaju', err, { tipo, dia, desde: a, hasta: b });
+      return;
+    }
+    if (respuesta.demasiados !== undefined) {
+      // Si un pedazo cuenta más que el día entero, Joaju no está combinando la
+      // fecha con el rango de expedientes: no tiene sentido seguir partiendo.
+      if (respuesta.demasiados > total || a === b) {
+        resumen.sinListar.push(`${dia} (${total}; no se pudo partir por expediente)`);
+        return;
+      }
+      const mitad = a + Math.floor((b - a) / 2);
+      pendientes.unshift([a, mitad], [mitad + 1, b]);
+      continue;
+    }
+    recibidas += respuesta.registros.length;
+    resumen.recibidas += respuesta.registros.length;
+    for (const item of respuesta.registros) await guardar(item, resumen, { sinAlertas });
+    if (respuesta.registros.length) {
+      console.log(`[joaju] ${dia}, expedientes ${a} a ${b}: ${respuesta.registros.length} marcas`);
+    }
+  }
+  console.log(`[joaju] ${dia}: ${recibidas} de ${total} marcas (partido por expediente)`);
+  if (recibidas < total) resumen.sinListar.push(`${dia} (${total}; llegaron ${recibidas})`);
 }
 
 /** Por fecha de solicitud ('solicitadas') o de vencimiento ('vencen'). */
@@ -631,11 +697,45 @@ async function probar(expediente) {
     : '\nLa búsqueda por fecha no funciona: usá --expedientes y --completar.');
 }
 
+// --probar-dia: un día con demasiadas marcas, ¿se puede partir por expediente?
+// No guarda nada.
+async function probarDia(dia, tipo = 'vencen') {
+  const contar = async (titulo, arg0) => {
+    try {
+      const r = await consultar(arg0, { intentos: 1 });
+      const n = r.demasiados ?? r.registros.length;
+      console.log(`- ${titulo}: ${r.demasiados !== undefined ? `demasiados para listar (${n})` : `${n} marcas`}`);
+      return r;
+    } catch (err) {
+      console.log(`- ${titulo}: ERROR ${err.message}`);
+      return null;
+    }
+  };
+  const cuantas = (r) => r.demasiados ?? r.registros.length;
+  console.log(`\nMarcas que ${tipo === 'vencen' ? 'vencen' : 'se solicitaron'} el ${dia}`);
+  const todo = await contar('el día entero', criterios[tipo](dia, dia));
+  if (!todo) return;
+  const corte = 1_700_000;
+  const r1 = await contar(`el día, expedientes 0 a ${corte - 1}`, criterios.diaYExpedientes(tipo, dia, 0, corte - 1));
+  const r2 = await contar(`el día, expedientes ${corte} a ${EXPEDIENTE_MAX}`, criterios.diaYExpedientes(tipo, dia, corte, EXPEDIENTE_MAX));
+  if (!r1 || !r2) return;
+  const listadas = [...r1.registros, ...r2.registros].map(aMarca);
+  const fueraDelDia = listadas.filter((m) => (tipo === 'vencen' ? m.fecha_vencimiento : m.fecha_ingreso) !== dia).length;
+  const suma = cuantas(r1) + cuantas(r2);
+  if (suma === cuantas(todo) && !fueraDelDia) {
+    console.log(`\nOK: las dos mitades suman ${suma}, lo mismo que el día entero. Se puede partir por expediente.`);
+  } else {
+    console.log(`\nATENCIÓN: las mitades suman ${suma} (el día entero da ${cuantas(todo)})` +
+      `${fueraDelDia ? ` y ${fueraDelDia} marcas no son de ese día` : ''}. Pasale esta salida a Claude.`);
+  }
+}
+
 // ---------------------------------------------------------------------
 // Línea de comandos
 // ---------------------------------------------------------------------
 const USO = `Uso (empezar siempre por --probar):
   node --env-file=.env src/joaju.js --probar [expediente]
+  node --env-file=.env src/joaju.js --probar-dia AAAA-MM-DD   (día con demasiadas marcas que vencen)
   node --env-file=.env src/joaju.js --expedientes 2681702 2692763 [--sin-avisos]
   node --env-file=.env src/joaju.js --completar
   node --env-file=.env src/joaju.js --solicitudes AAAA-MM-DD AAAA-MM-DD [--sin-avisos]
@@ -666,6 +766,11 @@ async function main() {
   const hastaTerminar = banderas.has('--hasta-terminar');
   const [desde, hasta] = valores;
 
+  if (banderas.has('--probar-dia')) {
+    if (!ES_FECHA.test(desde ?? '')) return uso();
+    await probarDia(desde, banderas.has('--solicitudes') ? 'solicitadas' : 'vencen');
+    return;
+  }
   if (banderas.has('--probar')) {
     await probar(valores[0] ?? '2692764');
     return;
